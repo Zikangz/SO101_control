@@ -1,0 +1,23 @@
+<launch>
+  <arg name="variant" default="follower"/>
+  <arg name="use_gui" default="true"/>
+  <arg name="enable_static_cam" default="false"/>
+  <arg name="enable_wrist_cam" default="false"/>
+
+  <param name="robot_description"
+         command="$(find xacro)/xacro '$(find so101_description)/urdf/so101_arm.urdf.xacro'
+                  variant:=$(arg variant)
+                  use_ros2_control:=false
+                  enable_static_cam:=$(arg enable_static_cam)
+                  enable_wrist_cam:=$(arg enable_wrist_cam)"/>
+
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher"/>
+
+  <group if="$(arg use_gui)">
+    <node pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" name="joint_state_publisher_gui"/>
+  </group>
+
+  <node pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find so101_description)/rviz/display.rviz"
+        required="false"/>
+</launch>

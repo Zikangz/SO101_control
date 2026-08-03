@@ -1,0 +1,11 @@
+<launch>
+  <arg name="rate_hz" default="10.0"/>
+  <arg name="fresh_timeout_s" default="1.0"/>
+  <arg name="out_topic" default="/aerial_manipulation/state"/>
+
+  <node pkg="so101_ros1_bridge" type="so101_aerial_state_node.py" name="so101_aerial_state_node" output="screen">
+    <param name="rate_hz" value="$(arg rate_hz)"/>
+    <param name="fresh_timeout_s" value="$(arg fresh_timeout_s)"/>
+    <param name="out_topic" value="$(arg out_topic)"/>
+  </node>
+</launch>

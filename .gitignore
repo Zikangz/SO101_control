@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+.venvs/
+venv/
+
+# Training, simulation, and generated outputs
+outputs/
+logs/
+runs/
+wandb/
+*.log
+events.out.tfevents.*
+*.zip
+*.pt
+*.pth
+*.onnx
+
+# ROS/catkin generated files
+ros1_ws/build/
+ros1_ws/devel/
+ros1_ws/install/
+ros1_ws/logs/
+.catkin_tools/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+
+# MuJoCo / matplotlib runtime cache
+.mujoco/
+.matplotlib/
