@@ -28,6 +28,20 @@ servo_pid:
 servo_speed: 800
 servo_acceleration: 50
 
+# Real-time Cartesian servo (so101_servo_node.py). Drives the end effector in
+# the x-z plane from either a Cartesian position target or an EE velocity
+# command, streaming smoothed joint setpoints to /so101/command_joint_servo.
+servo_rate_hz: 100.0
+servo_input_timeout_s: 0.3          # drop position/velocity commands older than this
+servo_joint_state_timeout_s: 0.5    # require fresh joint_states to stay active
+servo_position_gain: 6.0            # proportional pull toward the Cartesian setpoint (1/s)
+servo_max_ee_speed: 0.25            # cap on commanded EE speed in the x-z plane (m/s)
+servo_ik_damping: 0.06              # DLS damping for the resolved-rate Jacobian
+servo_accel_scale: 6.0              # joint max_acceleration = max_velocity * this
+servo_jerk_scale: 12.0             # joint max_jerk = max_acceleration * this
+servo_resync_gain: 0.0              # >0 slowly resyncs internal q_cmd to measured (1/s)
+servo_prefer_ruckig: true           # use Ruckig online limiter when importable
+
 workspace_limits:
   x: [0.07, 0.45]
   y: [-0.25, 0.25]

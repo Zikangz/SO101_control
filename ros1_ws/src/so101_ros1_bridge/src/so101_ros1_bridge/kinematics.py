@@ -143,6 +143,74 @@ class SO101Kinematics:
                 transform = transform @ _translation(joint.axis * q.get(joint.name, 0.0))
         return transform
 
+    def fk_position(self, positions):
+        """Return only the end-effector translation (xyz) for the given joints."""
+        return self.fk(positions)[:3, 3]
+
+    def position_jacobian(self, positions, active_joints, locked_joints=None, eps=1e-4):
+        """Finite-difference position Jacobian for a Cartesian servo.
+
+        Returns (jac, current_xyz, active) where jac is a (3 x len(active))
+        matrix whose columns are d(ee_xyz)/d(joint) for each active joint that
+        is part of the kinematic chain and not locked.  This reuses the same
+        forward-difference convention used by the iterative IK solver so that
+        the resolved-rate servo and the position IK agree on Jacobian signs.
+        """
+        locked_joints = dict(locked_joints or {})
+        active = self._active_ik_joints(active_joints, locked_joints)
+        q = self.complete_positions(positions)
+        for name, value in locked_joints.items():
+            if name in q:
+                q[name] = self.clip_joint(name, value)
+        current = self.fk(q)[:3, 3]
+        jac = np.zeros((3, len(active)), dtype=float)
+        for col, name in enumerate(active):
+            q_eps = dict(q)
+            q_eps[name] = self.clip_joint(name, q_eps[name] + eps)
+            jac[:, col] = (self.fk(q_eps)[:3, 3] - current) / eps
+        return jac, current, active
+
+    def resolve_ee_velocity(
+        self,
+        positions,
+        ee_velocity_xyz,
+        active_joints,
+        locked_joints=None,
+        damping=0.05,
+        axes=(0, 1, 2),
+    ):
+        """Map a desired end-effector linear velocity to joint velocities.
+
+        Uses damped least squares (DLS): qdot = J^T (J J^T + lambda^2 I)^-1 v,
+        restricted to the requested Cartesian ``axes``.  For the planar SO101
+        the servo passes ``axes=(0, 2)`` (x-z plane) because shoulder_pan and
+        wrist_roll are locked and the y-row of the Jacobian is identically 0.
+
+        Returns a dict {joint_name: qdot} for the active (unlocked) joints.
+        The returned velocities are raw; velocity/acceleration/jerk limiting is
+        applied downstream (see so101_ros1_bridge.servo).
+        """
+        axes = tuple(int(a) for a in axes)
+        jac, _current, active = self.position_jacobian(positions, active_joints, locked_joints)
+        if not active:
+            return {}
+        vel = np.asarray(ee_velocity_xyz, dtype=float).reshape(-1)
+        if vel.shape[0] == 3:
+            vel_sel = vel[list(axes)]
+        elif vel.shape[0] == len(axes):
+            vel_sel = vel
+        else:
+            raise ValueError(
+                "ee_velocity_xyz must have length 3 or len(axes)=%d" % len(axes)
+            )
+        jac_sel = jac[list(axes), :]
+        lhs = jac_sel @ jac_sel.T + (float(damping) ** 2) * np.eye(len(axes))
+        try:
+            qdot = jac_sel.T @ np.linalg.solve(lhs, vel_sel)
+        except np.linalg.LinAlgError:
+            qdot = np.linalg.pinv(jac_sel) @ vel_sel
+        return {name: float(qdot[idx]) for idx, name in enumerate(active)}
+
     def _active_ik_joints(self, active_joints, locked_joints):
         return [
             name

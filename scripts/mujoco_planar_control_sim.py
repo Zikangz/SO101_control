@@ -26,10 +26,13 @@ os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "outputs" / ".matplotlib"))
 import matplotlib.pyplot as plt
 
 from so101_ros1_bridge.control import JointSafetyFilter
+from so101_ros1_bridge.kinematics import SO101Kinematics
 from so101_ros1_bridge.poses import JOINT_ORDER, SAFE_POSES
+from so101_ros1_bridge.servo import PlanarCartesianServo
 
 DEFAULT_CONFIG = ROOT / "ros1_ws" / "src" / "so101_ros1_bridge" / "config" / "so101_planar_3dof_gripper.yaml"
 DEFAULT_MODEL = ROOT / "assets" / "so101" / "scene.xml"
+DEFAULT_URDF = ROOT / "assets" / "so101" / "so101_new_calib.urdf"
 EE_SITE = "gripperframe"
 EE_BODY = "gripper"
 ARM_IK_JOINTS = ("shoulder_lift", "elbow_flex", "wrist_flex")
@@ -58,13 +61,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
         "--controller",
-        choices=["joint_trajectory", "cartesian_stream", "moveit_like", "moveit_ruckig", "argo_like", "argo_external"],
+        choices=["joint_trajectory", "cartesian_stream", "moveit_like", "moveit_ruckig", "argo_like", "argo_external", "servo"],
         default=None,
         help=(
             "Controller to execute. If omitted, --execution-mode is used for backward "
             "compatibility. moveit_like retimes the IK waypoint path with joint velocity "
             "limits; moveit_ruckig uses the Python Ruckig library used by MoveIt for jerk-limited "
-            "smoothing; argo_external uses the downloaded Argo-Robot/controls URDF IK."
+            "smoothing; argo_external uses the downloaded Argo-Robot/controls URDF IK; servo runs "
+            "the real-time resolved-rate Cartesian servo (so101_ros1_bridge.servo) shared with the "
+            "ROS servo node, driving the EE target directly each control tick."
         ),
     )
     parser.add_argument(
@@ -105,6 +110,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ik-tolerance", type=float, default=5e-5)
     parser.add_argument("--ik-damping", type=float, default=0.035)
     parser.add_argument("--ik-max-dq", type=float, default=0.08)
+    # --controller servo tuning (shared PlanarCartesianServo law).
+    parser.add_argument("--urdf-path", type=Path, default=DEFAULT_URDF, help="URDF for the servo's analytic-free kinematics")
+    parser.add_argument("--servo-input", choices=["position", "velocity"], default="position",
+                        help="How the servo controller consumes the figure-eight target: as a position setpoint or as its finite-difference velocity")
+    parser.add_argument("--servo-position-gain", type=float, default=6.0)
+    parser.add_argument("--servo-max-ee-speed", type=float, default=0.25)
+    parser.add_argument("--servo-ik-damping", type=float, default=0.06)
+    parser.add_argument("--servo-accel-scale", type=float, default=6.0)
+    parser.add_argument("--servo-jerk-scale", type=float, default=12.0)
+    parser.add_argument("--servo-no-ruckig", dest="servo_prefer_ruckig", action="store_false")
+    parser.set_defaults(servo_prefer_ruckig=True)
     parser.add_argument("--plan-multistart-every-target", action="store_true")
     parser.add_argument("--stream-multistart-every-target", action="store_true")
     parser.add_argument("--log-rate", type=float, default=100.0)
@@ -792,6 +808,44 @@ def run(args: argparse.Namespace) -> None:
     if controller_name in {"joint_trajectory", "moveit_like", "moveit_ruckig"}:
         control_filter.set_timed_trajectory(command_names, timed_positions)
 
+    cartesian_servo = None
+    servo_prev_target = None
+    if controller_name == "servo":
+        # Reuse the exact resolved-rate servo law that the ROS servo node runs.
+        # Fidelity note: this uses the URDF finite-difference Jacobian from the
+        # shared kinematics module, not MuJoCo's analytic mj_jacSite. That is the
+        # point -- it validates the same code path that runs on hardware. The DLS
+        # controllers above (cartesian_stream/argo_like) use the MuJoCo Jacobian
+        # and remain available for an analytic-Jacobian comparison.
+        servo_urdf = args.urdf_path.read_text()
+        servo_kin = SO101Kinematics.from_urdf(
+            servo_urdf,
+            base_link="base_link",
+            tip_link="gripper_frame_link",
+            limits_override=config.get("limits", {}),
+        )
+        cartesian_servo = PlanarCartesianServo(
+            servo_kin,
+            config["active_joints"],
+            config.get("locked_joints", {}),
+            config.get("limits", {}),
+            config.get("max_velocity", {}),
+            workspace_limits=config.get("workspace_limits", {}),
+            axes=PLANAR_AXES,
+            position_gain=args.servo_position_gain,
+            max_ee_speed=args.servo_max_ee_speed,
+            ik_damping=args.servo_ik_damping,
+            accel_scale=args.servo_accel_scale,
+            jerk_scale=args.servo_jerk_scale,
+            control_dt=1.0 / args.control_rate,
+            prefer_ruckig=args.servo_prefer_ruckig,
+        )
+        cartesian_servo.reset(read_control_positions(model, data, maps, config["joint_order"]))
+        # The servo controls its own URDF FK frame; the tracking metric measures
+        # the MuJoCo EE frame. Measure their constant offset at the start pose so
+        # targets given in the MuJoCo frame map correctly into the servo frame.
+        servo_frame_offset = ee_position(data, ee_ref) - np.asarray(cartesian_servo.p_cmd, dtype=np.float64)
+
     control_dt = 1.0 / args.control_rate
     sim_steps = int(round(control_dt / model.opt.timestep))
     sim_steps = max(1, sim_steps)
@@ -870,6 +924,30 @@ def run(args: argparse.Namespace) -> None:
                     if ok:
                         stream_seed = dict(solution)
                 desired = complete_positions(config, stream_seed)
+            elif controller_name == "servo":
+                measured = read_control_positions(model, data, maps, config["joint_order"])
+                # Map the MuJoCo-frame target into the servo's URDF FK frame.
+                servo_target = (np.asarray(target, dtype=np.float64) - servo_frame_offset)
+                position_target = None
+                velocity_cmd = None
+                if elapsed <= execution_duration:
+                    if args.servo_input == "velocity":
+                        if servo_prev_target is None:
+                            servo_prev_target = servo_target.copy()
+                        velocity_cmd = list((servo_target - servo_prev_target) / control_dt)
+                        servo_prev_target = servo_target.copy()
+                    else:
+                        position_target = list(servo_target)
+                else:
+                    # Hold the last commanded EE setpoint during --post-hold.
+                    position_target = list(cartesian_servo.p_cmd)
+                q_cmd = cartesian_servo.step(
+                    control_dt,
+                    measured_positions=measured,
+                    position_target=position_target,
+                    velocity_cmd=velocity_cmd,
+                )
+                desired = complete_positions(config, q_cmd)
             else:
                 desired = control_filter.step(control_dt)
             write_ctrl(model, data, maps, desired)

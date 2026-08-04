@@ -3,6 +3,8 @@
   <arg name="config" default="$(find so101_ros1_bridge)/config/so101_planar_3dof_gripper.yaml"/>
   <arg name="with_description" default="true"/>
   <arg name="with_kinematics" default="true"/>
+  <arg name="with_servo" default="false"/>
+  <arg name="servo_rate_hz" default="100.0"/>
   <arg name="with_trajectory_action" default="false"/>
   <arg name="trajectory_action_resample_hz" default="0.0"/>
   <arg name="command_rate_hz" default="100.0"/>
@@ -59,6 +61,15 @@
   <node pkg="so101_ros1_bridge" type="so101_kinematics_node.py" name="so101_kinematics_node" output="screen"
         if="$(arg with_kinematics)">
     <rosparam command="load" file="$(arg config)"/>
+  </node>
+
+  <!-- Real-time Cartesian servo for the aerial-manipulation loop. Off by
+       default; enable with with_servo:=true. Feed /so101/cartesian_servo_target
+       (PoseStamped) or /so101/ee_velocity_cmd (TwistStamped). -->
+  <node pkg="so101_ros1_bridge" type="so101_servo_node.py" name="so101_servo_node" output="screen"
+        if="$(arg with_servo)">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="servo_rate_hz" value="$(arg servo_rate_hz)"/>
   </node>
 
   <node pkg="so101_ros1_bridge" type="so101_follow_joint_trajectory_server.py"

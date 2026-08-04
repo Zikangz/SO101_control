@@ -101,6 +101,50 @@ the planar 3 arm DOF + 1 gripper DOF configuration; do not unlock
 - Use `joint_trajectory` mode for controlled experiments.
 - Use `cartesian_stream` only after the planned trajectory path works.
 
+## Real-time Cartesian Servo Path
+
+For drone/RL integration, prefer the dedicated servo path instead of repeatedly
+publishing `/so101/cartesian_target`. The servo node runs a fixed-rate
+resolved-rate loop and streams joint setpoints through `/so101/command_joint_servo`.
+
+Start hardware with the servo node enabled:
+
+```bash
+roslaunch so101_ros1_bridge hardware_bridge.launch \
+  port:=/dev/ttyACM0 \
+  with_servo:=true \
+  command_rate_hz:=100 \
+  servo_rate_hz:=100
+```
+
+The upper layer can command either:
+
+- `/so101/ee_velocity_cmd` (`geometry_msgs/TwistStamped`): preferred for
+  RL/drone coupling because it is a velocity-style online command.
+- `/so101/cartesian_servo_target` (`geometry_msgs/PoseStamped`): useful for
+  slowly moving toward a current end-effector target.
+
+Servo status topics are intentionally separated:
+
+- `/so101/servo_status`: low-level driver/backend telemetry.
+- `/so101/cartesian_servo_status`: Cartesian servo controller status.
+
+Bring up the real arm with very small velocity commands first:
+
+```bash
+rostopic pub -r 20 /so101/ee_velocity_cmd geometry_msgs/TwistStamped \
+  "header: {frame_id: 'base_link'}
+twist:
+  linear: {x: 0.005, y: 0.0, z: 0.0}
+  angular: {x: 0.0, y: 0.0, z: 0.0}"
+```
+
+Stop the Cartesian servo:
+
+```bash
+rostopic pub /so101/servo_disable std_msgs/Empty "{}" --once
+```
+
 ## Hardware Checks
 
 Run a hold/repeatability test:

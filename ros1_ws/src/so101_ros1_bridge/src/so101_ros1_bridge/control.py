@@ -241,6 +241,32 @@ class JointSafetyFilter:
         self._start_trajectory(next_target, duration_s=duration_s)
         return copy.deepcopy(self.target)
 
+    def set_servo_target(self, positions_by_name, allow_locked=False):
+        """Update the tracking target for a high-rate streaming servo.
+
+        Unlike ``set_target_positions``, this does NOT start a new minimum-jerk
+        move.  Restarting the minimum-jerk profile on every streamed setpoint is
+        the documented cause of phase lag and end-effector jitter (see
+        ROS1_TRAJECTORY_DEBUG.md).  Instead we only move ``self.target`` and let
+        ``step()`` velocity-limit ``commanded`` toward it continuously.  The
+        upstream servo node is responsible for velocity/acceleration/jerk
+        smoothing, so the setpoints arriving here are already feasible.
+        """
+        next_target = copy.deepcopy(self.target)
+        for name, value in positions_by_name.items():
+            if name not in self.joint_order:
+                raise ValueError("Unknown joint in servo command: %s" % name)
+            if name in self.locked_joints and not allow_locked:
+                continue
+            next_target[name] = self._clip_joint(name, value)
+        # Cancel any in-flight timed trajectory / minimum-jerk move so step()
+        # uses its velocity-limited tracking branch toward the new target.
+        self.timed_trajectory = None
+        self.trajectory_duration = 0.0
+        self.target = self._complete_positions(next_target)
+        self.last_update_time = self._now()
+        return copy.deepcopy(self.target)
+
     def apply_deltas(self, deltas_by_name, duration_s=0.0):
         next_target = copy.deepcopy(self.target)
         for name, delta in deltas_by_name.items():

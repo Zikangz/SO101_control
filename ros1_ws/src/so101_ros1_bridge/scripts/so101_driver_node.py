@@ -110,6 +110,7 @@ class SO101DriverNode:
         self.target_joint_pub = rospy.Publisher("/so101/target_joint_states", JointState, queue_size=10)
 
         rospy.Subscriber("/so101/command_joint_positions", JointTrajectory, self._on_joint_trajectory, queue_size=1)
+        rospy.Subscriber("/so101/command_joint_servo", JointState, self._on_joint_servo, queue_size=1)
         rospy.Subscriber("/so101/command_joint_deltas", Float64MultiArray, self._on_joint_deltas, queue_size=1)
         rospy.Subscriber("/so101/gripper_command", Float32, self._on_gripper_command, queue_size=1)
         rospy.Subscriber("/so101/estop", Bool, self._on_estop, queue_size=1)
@@ -276,6 +277,29 @@ class SO101DriverNode:
                 self.relaxed = False
             except ValueError as exc:
                 rospy.logwarn("Rejected joint position command: %s", exc)
+
+    def _on_joint_servo(self, msg):
+        """High-rate streaming servo setpoints from so101_servo_node.
+
+        Unlike single-point JointTrajectory messages, these update the safety
+        filter's target without restarting the minimum-jerk profile, so the
+        driver velocity-limits toward a continuously-moving target instead of
+        re-easing on every frame (see JointSafetyFilter.set_servo_target).
+        """
+        if not msg.name or not msg.position:
+            return
+        if len(msg.name) != len(msg.position):
+            rospy.logwarn_throttle(1.0, "Ignoring servo command with mismatched names/positions")
+            return
+        with self.lock:
+            if self.estop:
+                return
+            try:
+                self.filter.set_servo_target(dict(zip(msg.name, msg.position)))
+                self._hold_target_for(self.command_timeout_s)
+                self.relaxed = False
+            except ValueError as exc:
+                rospy.logwarn_throttle(1.0, "Rejected servo command: %s", exc)
 
     def _on_joint_deltas(self, msg):
         values = list(msg.data)

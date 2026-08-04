@@ -173,6 +173,19 @@ python so101_mujoco_tracking/scripts/compare_planar_controllers.py \
   --output-dir /tmp/so101_backbend_compare_true_external
 ```
 
+Run the shared real-time Cartesian servo law in MuJoCo. This is the local
+simulation analogue of the ROS node used for hardware:
+
+```bash
+python so101_mujoco_tracking/scripts/mujoco_planar_control_sim.py \
+  --controller servo \
+  --servo-input velocity \
+  --cycles 1 \
+  --frequency 0.1 \
+  --x-amplitude 0.03 \
+  --z-amplitude 0.03
+```
+
 Run the less preferred online single-target streaming mode for comparison:
 
 ```bash
@@ -205,10 +218,72 @@ Current controller pipeline:
    actuators, matching the control style used by Argo's simple MuJoCo demos.
 7. In `argo_external` mode, call the downloaded Argo-Robot/controls
    `URDF_Kinematics` implementation directly.
-8. `JointSafetyFilter` applies joint limits, max velocity, and cubic Hermite
+8. In `servo` mode, run the same resolved-rate Cartesian servo used by the
+   ROS hardware path: Cartesian target/velocity -> DLS Jacobian velocity ->
+   Ruckig or simple joint limiter -> streaming joint setpoints.
+9. `JointSafetyFilter` applies joint limits, max velocity, and cubic Hermite
    interpolation between timed waypoints.
-9. MuJoCo position actuators track the commanded joint targets while MuJoCo
+10. MuJoCo position actuators track the commanded joint targets while MuJoCo
    simulates gravity, damping, friction loss, actuator force limits, and contact.
+
+## ROS1 Noetic Real-Time Servo
+
+For Jetson Xavier NX on Ubuntu 20.04 / ROS Noetic / Python 3.8, use the ROS1
+workspace under `ros1_ws/`. The hardware path intentionally uses Python 3.8
+compatible code and keeps Ruckig optional.
+
+Build on the Jetson:
+
+```bash
+cd ~/SO101_control/ros1_ws
+rosdep install --from-paths src --ignore-src -r -y
+python3 -m pip install numpy pyyaml "feetech-servo-sdk>=1.0.0,<2.0.0"
+python3 -m pip install ruckig  # optional; falls back to SimpleJointLimiter if unavailable
+catkin_make
+source devel/setup.bash
+```
+
+Start the hardware bridge with the servo node enabled:
+
+```bash
+roslaunch so101_ros1_bridge hardware_bridge.launch \
+  port:=/dev/ttyACM0 \
+  with_servo:=true \
+  command_rate_hz:=100 \
+  servo_rate_hz:=100
+```
+
+Send a very small velocity test first:
+
+```bash
+rostopic pub -r 20 /so101/ee_velocity_cmd geometry_msgs/TwistStamped \
+  "header: {frame_id: 'base_link'}
+twist:
+  linear: {x: 0.005, y: 0.0, z: 0.0}
+  angular: {x: 0.0, y: 0.0, z: 0.0}"
+```
+
+Stop streaming and hold:
+
+```bash
+rostopic pub /so101/servo_disable std_msgs/Empty "{}" --once
+```
+
+Watch diagnostics:
+
+```bash
+rostopic echo /so101/status
+rostopic echo /so101/servo_status
+rostopic echo /so101/cartesian_servo_status
+```
+
+`/so101/servo_status` is the low-level Feetech/MuJoCo backend telemetry.
+`/so101/cartesian_servo_status` is the Cartesian servo controller state.
+
+The desktop RL/MuJoCo modules under `so101_tracking/` and some standalone
+scripts use newer Python typing and are intended for the local training
+environment. They should not be mixed into the Jetson Noetic runtime unless you
+backport their annotations or run them in a separate Python environment.
 
 ## Traditional IK Baseline
 

@@ -5,6 +5,8 @@
   <arg name="mujoco_substeps" default="10"/>
   <arg name="with_description" default="true"/>
   <arg name="with_kinematics" default="true"/>
+  <arg name="with_servo" default="false"/>
+  <arg name="servo_rate_hz" default="100.0"/>
   <arg name="with_trajectory_action" default="false"/>
   <arg name="trajectory_action_resample_hz" default="0.0"/>
   <arg name="command_rate_hz" default="100.0"/>
@@ -56,6 +58,17 @@
   <node pkg="so101_ros1_bridge" type="so101_kinematics_node.py" name="so101_kinematics_node" output="screen"
         if="$(arg with_kinematics)">
     <rosparam command="load" file="$(arg config)"/>
+  </node>
+
+  <!-- Real-time Cartesian servo. Listens on /so101/cartesian_servo_target and
+       /so101/ee_velocity_cmd and streams to /so101/command_joint_servo. This is
+       a different command path than the one-shot kinematics node, so both may
+       run together, but do not command both /so101/cartesian_target and the
+       servo topics at once. -->
+  <node pkg="so101_ros1_bridge" type="so101_servo_node.py" name="so101_servo_node" output="screen"
+        if="$(arg with_servo)">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="servo_rate_hz" value="$(arg servo_rate_hz)"/>
   </node>
 
   <node pkg="so101_ros1_bridge" type="so101_follow_joint_trajectory_server.py"

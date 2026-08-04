@@ -5,6 +5,33 @@ IK / PID / MPC / RL 在机械臂运动控制中的关系。
 
 ## 修改记录
 
+### 2026-08-04
+
+- 新增实时 Cartesian servo 通路，面向后续无人机/RL 联动。
+  - 新增 `so101_ros1_bridge/servo.py`：ROS 无关的
+    `PlanarCartesianServo`、`RuckigJointLimiter`、`SimpleJointLimiter`。
+  - 新增 `so101_servo_node.py`：100Hz ROS 节点，订阅
+    `/so101/cartesian_servo_target` 和 `/so101/ee_velocity_cmd`，发布
+    `/so101/command_joint_servo`。
+  - `so101_driver_node.py` 新增 `/so101/command_joint_servo` 订阅；driver 仍只做
+    真机安全层、限位、限速、超时保护和 Feetech 写入。
+  - `JointSafetyFilter.set_servo_target()` 只更新连续 servo 目标，不重启
+    minimum-jerk 轨迹，避免高频目标导致反复 ease-in/ease-out。
+  - `mujoco_planar_control_sim.py` 新增 `--controller servo`，本机仿真可复用
+    与真机一致的 servo 控制律。
+  - `tests/test_servo.py` 覆盖 Jacobian、DLS velocity resolve、Ruckig/simple limiter
+    和 servo-mode safety filter。
+- 修正状态 topic 命名。
+  - `/so101/servo_status` 保留给 driver 的低层舵机/后端遥测。
+  - `/so101/cartesian_servo_status` 用于新的 Cartesian servo 节点状态，避免两个
+    不同 JSON schema 混在同一 topic。
+- Python/Jetson 兼容性结论。
+  - `ros1_ws/src/so101_ros1_bridge` 已按 Python 3.8 语法检查通过，适合
+    Ubuntu 20.04 / ROS Noetic 路径。
+  - Ruckig 是可选依赖；Jetson 上安装失败时会自动使用 `SimpleJointLimiter`。
+  - 桌面训练模块 `so101_tracking/` 和部分 standalone 脚本包含 Python 3.10+
+    类型标注，建议继续留在本机训练环境，不直接作为 Noetic 运行路径。
+
 ### 2026-08-03
 
 - 新增本机无 ROS 的 MuJoCo 平面 3DOF+夹爪控制仿真脚本。

@@ -21,6 +21,7 @@ catkin_install_python(PROGRAMS
   scripts/so101_driver_node.py
   scripts/so101_control_cli.py
   scripts/so101_kinematics_node.py
+  scripts/so101_servo_node.py
   scripts/so101_safe_sequence.py
   scripts/so101_precision_check.py
   scripts/so101_sine_test.py
