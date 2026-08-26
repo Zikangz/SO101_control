@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.conda-*/
+.venv*/
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.agents/
+.codex/
+
+# ROS/catkin generated files
+ros1_ws/build/
+ros1_ws/devel/
+ros1_ws/install/
+ros1_ws/log/
+ros1_ws/.catkin_workspace
+ros1_ws/src/CMakeLists.txt
+
+# Logs, bags, generated reports, and local archives
+logs/
+*.bag
+*.db3
+*.mcap
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Accidental CLI flag files
+--*
+
+# Local operator scratch notes
+指令
+
+# Local ROS logs/cache
+.ros/
+
+# Large external references remain local; install with scripts/bootstrap_noetic.sh.
+third_party/

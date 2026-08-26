@@ -1,0 +1,39 @@
+<launch>
+  <arg name="rate_hz" default="100.0"/>
+  <arg name="raw_velocity_topic" default="/so101/ee_velocity_cmd_raw"/>
+  <arg name="output_velocity_topic" default="/so101/ee_velocity_cmd"/>
+  <arg name="aerial_state_topic" default="/aerial_manipulation/state"/>
+  <arg name="status_topic" default="/so101/aerial_velocity_gate_status"/>
+  <arg name="require_aerial_state" default="false"/>
+  <arg name="require_mavros_connected" default="false"/>
+  <arg name="require_armed" default="false"/>
+  <arg name="require_guided" default="false"/>
+  <arg name="require_arm_state" default="true"/>
+  <arg name="require_arm_ok" default="true"/>
+  <arg name="max_ee_speed" default="0.10"/>
+  <arg name="max_ee_accel" default="0.35"/>
+  <arg name="max_ee_jerk" default="1.20"/>
+  <arg name="uav_nominal_speed" default="1.0"/>
+  <arg name="uav_max_speed" default="3.0"/>
+  <arg name="min_write_rate" default="60.0"/>
+
+  <node pkg="so101_ros1_bridge" type="so101_aerial_velocity_gate.py" name="so101_aerial_velocity_gate" output="screen">
+    <param name="rate_hz" value="$(arg rate_hz)"/>
+    <param name="raw_velocity_topic" value="$(arg raw_velocity_topic)"/>
+    <param name="output_velocity_topic" value="$(arg output_velocity_topic)"/>
+    <param name="aerial_state_topic" value="$(arg aerial_state_topic)"/>
+    <param name="status_topic" value="$(arg status_topic)"/>
+    <param name="require_aerial_state" value="$(arg require_aerial_state)"/>
+    <param name="require_mavros_connected" value="$(arg require_mavros_connected)"/>
+    <param name="require_armed" value="$(arg require_armed)"/>
+    <param name="require_guided" value="$(arg require_guided)"/>
+    <param name="require_arm_state" value="$(arg require_arm_state)"/>
+    <param name="require_arm_ok" value="$(arg require_arm_ok)"/>
+    <param name="max_ee_speed_m_s" value="$(arg max_ee_speed)"/>
+    <param name="max_ee_accel_m_s2" value="$(arg max_ee_accel)"/>
+    <param name="max_ee_jerk_m_s3" value="$(arg max_ee_jerk)"/>
+    <param name="uav_nominal_speed_m_s" value="$(arg uav_nominal_speed)"/>
+    <param name="uav_max_speed_m_s" value="$(arg uav_max_speed)"/>
+    <param name="min_write_rate_hz" value="$(arg min_write_rate)"/>
+  </node>
+</launch>

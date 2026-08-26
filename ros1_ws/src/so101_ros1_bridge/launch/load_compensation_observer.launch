@@ -1,0 +1,30 @@
+<launch>
+  <arg name="imu_topic" default="/mavros/imu/data"/>
+  <arg name="out_topic" default="/so101/load_compensation_state"/>
+  <arg name="publish_rate_hz" default="20.0"/>
+  <arg name="fresh_timeout_s" default="0.25"/>
+  <arg name="accel_filter_tau_s" default="0.25"/>
+  <arg name="orientation_is_body_to_world" default="true"/>
+  <arg name="imu_acceleration_is_specific_force" default="true"/>
+  <arg name="uav_to_arm_roll_rad" default="0.0"/>
+  <arg name="uav_to_arm_pitch_rad" default="0.0"/>
+  <arg name="uav_to_arm_yaw_rad" default="0.0"/>
+  <arg name="max_static_bias_tilt_deg" default="10.0"/>
+  <arg name="max_static_bias_linear_accel_m_s2" default="0.5"/>
+
+  <node pkg="so101_ros1_bridge" type="so101_load_compensation_observer.py"
+        name="so101_load_compensation_observer" output="screen">
+    <param name="imu_topic" value="$(arg imu_topic)"/>
+    <param name="out_topic" value="$(arg out_topic)"/>
+    <param name="publish_rate_hz" value="$(arg publish_rate_hz)"/>
+    <param name="fresh_timeout_s" value="$(arg fresh_timeout_s)"/>
+    <param name="accel_filter_tau_s" value="$(arg accel_filter_tau_s)"/>
+    <param name="orientation_is_body_to_world" value="$(arg orientation_is_body_to_world)"/>
+    <param name="imu_acceleration_is_specific_force" value="$(arg imu_acceleration_is_specific_force)"/>
+    <param name="uav_to_arm_roll_rad" value="$(arg uav_to_arm_roll_rad)"/>
+    <param name="uav_to_arm_pitch_rad" value="$(arg uav_to_arm_pitch_rad)"/>
+    <param name="uav_to_arm_yaw_rad" value="$(arg uav_to_arm_yaw_rad)"/>
+    <param name="max_static_bias_tilt_deg" value="$(arg max_static_bias_tilt_deg)"/>
+    <param name="max_static_bias_linear_accel_m_s2" value="$(arg max_static_bias_linear_accel_m_s2)"/>
+  </node>
+</launch>

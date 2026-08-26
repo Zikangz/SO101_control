@@ -1,0 +1,10 @@
+# Ubuntu 20.04 / Python 3.8 packaging compatibility.
+# If setuptools import fails, install these first in a separate command:
+#   python3 -m pip install --user -U "importlib-metadata>=6.8,<8" "setuptools>=65,<70" "wheel>=0.38,<0.46"
+importlib-metadata>=6.8,<8
+setuptools>=65,<70
+wheel>=0.38,<0.46
+pyserial>=3.5,<4.0
+feetech-servo-sdk>=1.0.0,<2.0.0
+# Offline and live IK-vs-feedback trajectory plots on Python 3.8.
+matplotlib>=3.3,<3.8

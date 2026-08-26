@@ -1,0 +1,187 @@
+<launch>
+  <arg name="port" default="/dev/ttyACM0"/>
+  <arg name="config" default="$(find so101_ros1_bridge)/config/so101_simplified_4dof.yaml"/>
+  <arg name="with_description" default="true"/>
+  <arg name="with_kinematics" default="true"/>
+  <arg name="with_servo" default="false"/>
+  <arg name="servo_rate_hz" default="100.0"/>
+  <arg name="servo_input_timeout_s" default="0.3"/>
+  <arg name="servo_joint_state_timeout_s" default="0.5"/>
+  <arg name="servo_position_gain" default="6.0"/>
+  <arg name="servo_max_ee_speed" default="0.25"/>
+  <arg name="servo_ik_damping" default="0.06"/>
+  <arg name="servo_accel_scale" default="6.0"/>
+  <arg name="servo_jerk_scale" default="12.0"/>
+  <arg name="servo_resync_gain" default="0.0"/>
+  <arg name="servo_prefer_ruckig" default="true"/>
+  <arg name="with_aerial_state" default="false"/>
+  <arg name="aerial_state_rate_hz" default="20.0"/>
+  <arg name="aerial_state_fresh_timeout_s" default="1.0"/>
+  <arg name="with_aerial_velocity_gate" default="false"/>
+  <arg name="aerial_velocity_gate_rate_hz" default="100.0"/>
+  <arg name="aerial_velocity_gate_raw_topic" default="/so101/ee_velocity_cmd_raw"/>
+  <arg name="aerial_velocity_gate_output_topic" default="/so101/ee_velocity_cmd"/>
+  <arg name="aerial_velocity_gate_require_aerial_state" default="false"/>
+  <arg name="aerial_velocity_gate_require_mavros_connected" default="false"/>
+  <arg name="aerial_velocity_gate_require_armed" default="false"/>
+  <arg name="aerial_velocity_gate_require_guided" default="false"/>
+  <arg name="aerial_velocity_gate_require_arm_state" default="true"/>
+  <arg name="aerial_velocity_gate_max_ee_speed" default="0.10"/>
+  <arg name="aerial_velocity_gate_max_ee_accel" default="0.35"/>
+  <arg name="aerial_velocity_gate_max_ee_jerk" default="1.20"/>
+  <arg name="aerial_velocity_gate_uav_nominal_speed" default="1.0"/>
+  <arg name="aerial_velocity_gate_uav_max_speed" default="3.0"/>
+  <arg name="aerial_velocity_gate_min_write_rate" default="60.0"/>
+  <arg name="with_trajectory_action" default="false"/>
+  <arg name="trajectory_action_resample_hz" default="0.0"/>
+  <arg name="command_rate_hz" default="100.0"/>
+  <arg name="publish_rate_hz" default="50.0"/>
+  <arg name="feedback_read_rate_hz" default="50.0"/>
+  <arg name="telemetry_rate_hz" default="2.0"/>
+  <arg name="trajectory_interpolation" default="cubic"/>
+  <arg name="command_lpf_alpha" default="1.0"/>
+  <arg name="command_deadband_rad" default="0.0"/>
+  <arg name="feedback_position_assist_gain" default="0.0"/>
+  <arg name="feedback_position_assist_integral_gain" default="0.0"/>
+  <arg name="feedback_position_assist_max_offset_rad" default="0.04"/>
+  <arg name="feedback_position_assist_limit_margin_rad" default="0.03"/>
+  <arg name="feedback_position_assist_alpha" default="0.15"/>
+  <arg name="feedback_position_assist_max_feedback_age_s" default="0.12"/>
+  <arg name="feedback_position_assist_trajectory_only" default="true"/>
+  <arg name="backlash_compensation_enabled" default="false"/>
+  <arg name="backlash_compensation_profile" default=""/>
+  <arg name="backlash_compensation_trajectory_only" default="true"/>
+  <arg name="backlash_compensation_max_abs_bias_rad" default=""/>
+  <arg name="backlash_compensation_bias_slew_rad_s" default=""/>
+  <arg name="backlash_compensation_velocity_threshold_rad_s" default=""/>
+  <arg name="backlash_compensation_position_hysteresis_rad" default=""/>
+  <arg name="backlash_compensation_limit_margin_rad" default=""/>
+  <arg name="configure_motors_on_connect" default="true"/>
+  <arg name="configuration_write_ack" default="true"/>
+  <arg name="servo_speed" default="800"/>
+  <arg name="servo_acceleration" default="50"/>
+  <arg name="servo_maximum_acceleration" default=""/>
+  <arg name="servo_pid_p" default="16"/>
+  <arg name="servo_pid_i" default="0"/>
+  <arg name="servo_pid_d" default="32"/>
+  <arg name="shoulder_lift_pid_p" default="32"/>
+  <arg name="shoulder_lift_pid_i" default="0"/>
+  <arg name="shoulder_lift_pid_d" default="32"/>
+  <arg name="elbow_flex_pid_p" default="28"/>
+  <arg name="elbow_flex_pid_i" default="0"/>
+  <arg name="elbow_flex_pid_d" default="32"/>
+  <arg name="wrist_flex_pid_p" default="16"/>
+  <arg name="wrist_flex_pid_i" default="0"/>
+  <arg name="wrist_flex_pid_d" default="32"/>
+
+  <group if="$(arg with_description)">
+    <param name="robot_description"
+           command="$(find xacro)/xacro '$(find so101_description)/urdf/so101_arm.urdf.xacro'
+                    variant:=follower
+                    use_ros2_control:=false"/>
+    <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher">
+      <remap from="joint_states" to="/so101/joint_states"/>
+    </node>
+  </group>
+
+  <node pkg="so101_ros1_bridge" type="so101_driver_node.py" name="so101_driver_node" output="screen">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="backend" value="feetech"/>
+    <param name="port" value="$(arg port)"/>
+    <param name="command_rate_hz" value="$(arg command_rate_hz)"/>
+    <param name="publish_rate_hz" value="$(arg publish_rate_hz)"/>
+    <param name="feedback_read_rate_hz" value="$(arg feedback_read_rate_hz)"/>
+    <param name="telemetry_rate_hz" value="$(arg telemetry_rate_hz)"/>
+    <param name="trajectory_interpolation" value="$(arg trajectory_interpolation)"/>
+    <param name="command_lpf_alpha" value="$(arg command_lpf_alpha)"/>
+    <param name="command_deadband_rad" value="$(arg command_deadband_rad)"/>
+    <param name="feedback_position_assist_gain" value="$(arg feedback_position_assist_gain)"/>
+    <param name="feedback_position_assist_integral_gain" value="$(arg feedback_position_assist_integral_gain)"/>
+    <param name="feedback_position_assist_max_offset_rad" value="$(arg feedback_position_assist_max_offset_rad)"/>
+    <param name="feedback_position_assist_limit_margin_rad" value="$(arg feedback_position_assist_limit_margin_rad)"/>
+    <param name="feedback_position_assist_alpha" value="$(arg feedback_position_assist_alpha)"/>
+    <param name="feedback_position_assist_max_feedback_age_s" value="$(arg feedback_position_assist_max_feedback_age_s)"/>
+    <param name="feedback_position_assist_trajectory_only" value="$(arg feedback_position_assist_trajectory_only)"/>
+    <param name="backlash_compensation_enabled" value="$(arg backlash_compensation_enabled)"/>
+    <param name="backlash_compensation_profile" value="$(arg backlash_compensation_profile)"/>
+    <param name="backlash_compensation_trajectory_only" value="$(arg backlash_compensation_trajectory_only)"/>
+    <param name="backlash_compensation_max_abs_bias_rad" value="$(arg backlash_compensation_max_abs_bias_rad)"/>
+    <param name="backlash_compensation_bias_slew_rad_s" value="$(arg backlash_compensation_bias_slew_rad_s)"/>
+    <param name="backlash_compensation_velocity_threshold_rad_s" value="$(arg backlash_compensation_velocity_threshold_rad_s)"/>
+    <param name="backlash_compensation_position_hysteresis_rad" value="$(arg backlash_compensation_position_hysteresis_rad)"/>
+    <param name="backlash_compensation_limit_margin_rad" value="$(arg backlash_compensation_limit_margin_rad)"/>
+    <param name="configure_motors_on_connect" value="$(arg configure_motors_on_connect)"/>
+    <param name="configuration_write_ack" value="$(arg configuration_write_ack)"/>
+    <param name="servo_speed" value="$(arg servo_speed)"/>
+    <param name="servo_acceleration" value="$(arg servo_acceleration)"/>
+    <param name="servo_maximum_acceleration" value="$(arg servo_maximum_acceleration)"/>
+    <param name="servo_pid/default/p" value="$(arg servo_pid_p)"/>
+    <param name="servo_pid/default/i" value="$(arg servo_pid_i)"/>
+    <param name="servo_pid/default/d" value="$(arg servo_pid_d)"/>
+    <param name="servo_pid/shoulder_lift/p" value="$(arg shoulder_lift_pid_p)"/>
+    <param name="servo_pid/shoulder_lift/i" value="$(arg shoulder_lift_pid_i)"/>
+    <param name="servo_pid/shoulder_lift/d" value="$(arg shoulder_lift_pid_d)"/>
+    <param name="servo_pid/elbow_flex/p" value="$(arg elbow_flex_pid_p)"/>
+    <param name="servo_pid/elbow_flex/i" value="$(arg elbow_flex_pid_i)"/>
+    <param name="servo_pid/elbow_flex/d" value="$(arg elbow_flex_pid_d)"/>
+    <param name="servo_pid/wrist_flex/p" value="$(arg wrist_flex_pid_p)"/>
+    <param name="servo_pid/wrist_flex/i" value="$(arg wrist_flex_pid_i)"/>
+    <param name="servo_pid/wrist_flex/d" value="$(arg wrist_flex_pid_d)"/>
+  </node>
+
+  <node pkg="so101_ros1_bridge" type="so101_kinematics_node.py" name="so101_kinematics_node" output="screen"
+        if="$(arg with_kinematics)">
+    <rosparam command="load" file="$(arg config)"/>
+  </node>
+
+  <node pkg="so101_ros1_bridge" type="so101_aerial_state_node.py" name="so101_aerial_state_node" output="screen"
+        if="$(arg with_aerial_state)">
+    <param name="rate_hz" value="$(arg aerial_state_rate_hz)"/>
+    <param name="fresh_timeout_s" value="$(arg aerial_state_fresh_timeout_s)"/>
+    <param name="out_topic" value="/aerial_manipulation/state"/>
+  </node>
+
+  <node pkg="so101_ros1_bridge" type="so101_aerial_velocity_gate.py" name="so101_aerial_velocity_gate" output="screen"
+        if="$(arg with_aerial_velocity_gate)">
+    <param name="rate_hz" value="$(arg aerial_velocity_gate_rate_hz)"/>
+    <param name="raw_velocity_topic" value="$(arg aerial_velocity_gate_raw_topic)"/>
+    <param name="output_velocity_topic" value="$(arg aerial_velocity_gate_output_topic)"/>
+    <param name="require_aerial_state" value="$(arg aerial_velocity_gate_require_aerial_state)"/>
+    <param name="require_mavros_connected" value="$(arg aerial_velocity_gate_require_mavros_connected)"/>
+    <param name="require_armed" value="$(arg aerial_velocity_gate_require_armed)"/>
+    <param name="require_guided" value="$(arg aerial_velocity_gate_require_guided)"/>
+    <param name="require_arm_state" value="$(arg aerial_velocity_gate_require_arm_state)"/>
+    <param name="max_ee_speed_m_s" value="$(arg aerial_velocity_gate_max_ee_speed)"/>
+    <param name="max_ee_accel_m_s2" value="$(arg aerial_velocity_gate_max_ee_accel)"/>
+    <param name="max_ee_jerk_m_s3" value="$(arg aerial_velocity_gate_max_ee_jerk)"/>
+    <param name="uav_nominal_speed_m_s" value="$(arg aerial_velocity_gate_uav_nominal_speed)"/>
+    <param name="uav_max_speed_m_s" value="$(arg aerial_velocity_gate_uav_max_speed)"/>
+    <param name="min_write_rate_hz" value="$(arg aerial_velocity_gate_min_write_rate)"/>
+  </node>
+
+  <!-- Real-time Cartesian servo. Listens on /so101/cartesian_servo_target and
+       /so101/ee_velocity_cmd and streams smoothed setpoints to
+       /so101/command_joint_servo. Do not command /so101/cartesian_target and
+       the servo topics at the same time. -->
+  <node pkg="so101_ros1_bridge" type="so101_servo_node.py" name="so101_servo_node" output="screen"
+        if="$(arg with_servo)">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="servo_rate_hz" value="$(arg servo_rate_hz)"/>
+    <param name="servo_input_timeout_s" value="$(arg servo_input_timeout_s)"/>
+    <param name="servo_joint_state_timeout_s" value="$(arg servo_joint_state_timeout_s)"/>
+    <param name="servo_position_gain" value="$(arg servo_position_gain)"/>
+    <param name="servo_max_ee_speed" value="$(arg servo_max_ee_speed)"/>
+    <param name="servo_ik_damping" value="$(arg servo_ik_damping)"/>
+    <param name="servo_accel_scale" value="$(arg servo_accel_scale)"/>
+    <param name="servo_jerk_scale" value="$(arg servo_jerk_scale)"/>
+    <param name="servo_resync_gain" value="$(arg servo_resync_gain)"/>
+    <param name="servo_prefer_ruckig" value="$(arg servo_prefer_ruckig)"/>
+  </node>
+
+  <node pkg="so101_ros1_bridge" type="so101_follow_joint_trajectory_server.py"
+        name="so101_follow_joint_trajectory_server" output="screen"
+        if="$(arg with_trajectory_action)">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="resample_hz" value="$(arg trajectory_action_resample_hz)"/>
+  </node>
+</launch>
