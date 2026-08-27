@@ -5,6 +5,18 @@ IK / PID / MPC / RL 在机械臂运动控制中的关系。
 
 ## 修改记录
 
+### 2026-08-27
+
+- 新增汇报用 MP4 导出能力。
+  - 新增 `scripts/video_utils.py`，统一使用 `imageio` 写出 H.264 MP4。
+  - `mujoco_planar_control_sim.py`、`compare_planar_controllers.py`、`eval_tracking.py`、
+    `eval_pick_lift.py`、`train_sac.py`、`train_pick_lift_sac.py` 均支持
+    `--record-video --video-fps`。
+  - `ik_baseline.py` 和 `ik_random_tracking.py` 支持直接录制传统 IK rollout，
+    不再依赖交互 viewer。
+  - `view_so101.py --record-video` 可生成 5 秒默认或指定 `--duration` 的场景展示片段。
+- 修正 `SO101TrackingEnv.render()` 重复创建 renderer 的问题，并增加 `close()` 释放资源。
+
 ### 2026-08-04
 
 - 新增实时 Cartesian servo 通路，面向后续无人机/RL 联动。
@@ -152,6 +164,18 @@ python so101_mujoco_tracking/scripts/mujoco_planar_control_sim.py \
   --frequency 0.05 \
   --x-amplitude 0.03 \
   --z-amplitude 0.03
+```
+
+导出对应 MP4 汇报视频：
+
+```bash
+python so101_mujoco_tracking/scripts/mujoco_planar_control_sim.py \
+  --controller joint_trajectory \
+  --cycles 1 \
+  --frequency 0.05 \
+  --x-amplitude 0.03 \
+  --z-amplitude 0.03 \
+  --record-video
 ```
 
 边看 MuJoCo，边实时看目标轨迹、末端轨迹和误差曲线。MuJoCo 里红点是当前

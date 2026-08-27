@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from so101_tracking import SO101PickLiftEnv  # noqa: E402
+from video_utils import write_mp4
 
 
 class PickLiftMetricsCallback(BaseCallback):
@@ -168,6 +169,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--viewer-real-time", action="store_true")
     parser.add_argument("--viewer-speed", type=float, default=1.0)
     parser.add_argument("--stop-if-viewer-closed", action="store_true")
+    parser.add_argument("--record-video", action="store_true", help="Record one post-training evaluation rollout to mp4.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate for --record-video outputs.")
     return parser.parse_args()
 
 
@@ -349,6 +352,8 @@ def main() -> None:
                 speed=args.viewer_speed,
             ),
         )
+    if args.record_video:
+        print("Warning: --record-video is a lightweight viewer capture mode; for a stable export, prefer evaluation scripts.")
 
     print(f"Run directory: {run_dir}")
     print(f"control_mode={args.control_mode}")
@@ -360,6 +365,38 @@ def main() -> None:
     final_path = model_dir / "final_model"
     model.save(final_path)
     print(f"Saved final model: {final_path}.zip")
+    if args.record_video:
+        record_env = SO101PickLiftEnv(
+            episode_steps=args.episode_steps,
+            frame_skip=args.frame_skip,
+            control_mode=args.control_mode,
+            ee_action_scale=args.ee_action_scale,
+            joint_action_scale=args.joint_action_scale,
+            ik_gain=args.ik_gain,
+            ik_damping=args.ik_damping,
+            ik_max_dq=args.ik_max_dq,
+            cube_xy_center=tuple(args.cube_xy_center),
+            cube_xy_range=tuple(args.cube_xy_range),
+            lift_height=args.lift_height,
+            virtual_grasp=args.virtual_grasp,
+            grasp_threshold=args.grasp_threshold,
+            render_mode="rgb_array",
+        )
+        obs, _ = record_env.reset(seed=args.seed + 20_000)
+        frames = []
+        done = False
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _reward, terminated, truncated, _info = record_env.step(action)
+            done = terminated or truncated
+            frame = record_env.render()
+            if frame is not None:
+                frames.append(frame)
+        record_env.close()
+        if frames:
+            video_path = run_dir / "pick_lift_demo.mp4"
+            write_mp4(frames, video_path, fps=args.video_fps)
+            print(f"video={video_path}")
     train_env.close()
     eval_env.close()
 

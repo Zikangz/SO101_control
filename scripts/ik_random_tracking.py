@@ -14,6 +14,8 @@ os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "outputs" / ".matplotlib"))
 
 import matplotlib.pyplot as plt
 
+from video_utils import write_mp4
+
 SCENE_PATH = ROOT / "assets" / "so101" / "scene.xml"
 ARM_DOF = 5
 HOME_QPOS = np.array([0.0, 0.25, -0.45, 0.45, 0.0, 0.45], dtype=np.float64)
@@ -34,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--viewer", action="store_true", help="Show MuJoCo motion while IK tracks the trajectory.")
     parser.add_argument("--real-time", action="store_true", help="Throttle viewer playback to MuJoCo sim time.")
     parser.add_argument("--speed", type=float, default=1.0, help="Viewer playback speed when --real-time is set.")
+    parser.add_argument("--record-video", action="store_true", help="Record the random IK rollout to mp4.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate for --record-video outputs.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "ik_random_tracking")
     return parser.parse_args()
 
@@ -149,6 +153,8 @@ def main() -> None:
     )
 
     rows: list[dict[str, float | int]] = []
+    frames: list[np.ndarray] = []
+    renderer = mujoco.Renderer(model, height=480, width=640) if args.record_video else None
 
     def run_step(step: int, target: np.ndarray) -> None:
         step_ik_control(model, data, site_id, target, home, ctrl_min, ctrl_max, args)
@@ -166,32 +172,43 @@ def main() -> None:
                 "target_z": float(target[2]),
             }
         )
+        if renderer is not None:
+            renderer.update_scene(data)
+            frames.append(renderer.render())
 
-    if args.viewer:
-        from mujoco import viewer as mujoco_viewer
+    try:
+        if args.viewer:
+            from mujoco import viewer as mujoco_viewer
 
-        speed = max(float(args.speed), 1e-6)
-        last_wall = time.perf_counter()
-        last_sim = float(data.time)
-        with mujoco_viewer.launch_passive(model, data, show_left_ui=True, show_right_ui=True) as viewer:
+            speed = max(float(args.speed), 1e-6)
+            last_wall = time.perf_counter()
+            last_sim = float(data.time)
+            with mujoco_viewer.launch_passive(model, data, show_left_ui=True, show_right_ui=True) as viewer:
+                for step, target in enumerate(targets):
+                    if not viewer.is_running():
+                        break
+                    run_step(step, target)
+                    if args.real_time:
+                        now_wall = time.perf_counter()
+                        now_sim = float(data.time)
+                        sleep_s = (now_sim - last_sim) / speed - (now_wall - last_wall)
+                        if sleep_s > 0:
+                            time.sleep(sleep_s)
+                        last_wall = time.perf_counter()
+                        last_sim = now_sim
+                    viewer.sync()
+        else:
             for step, target in enumerate(targets):
-                if not viewer.is_running():
-                    break
                 run_step(step, target)
-                if args.real_time:
-                    now_wall = time.perf_counter()
-                    now_sim = float(data.time)
-                    sleep_s = (now_sim - last_sim) / speed - (now_wall - last_wall)
-                    if sleep_s > 0:
-                        time.sleep(sleep_s)
-                    last_wall = time.perf_counter()
-                    last_sim = now_sim
-                viewer.sync()
-    else:
-        for step, target in enumerate(targets):
-            run_step(step, target)
+    finally:
+        if renderer is not None:
+            renderer.close()
 
     write_outputs(rows, args.output_dir)
+    if args.record_video and frames:
+        video_path = args.output_dir / "ik_random_tracking.mp4"
+        write_mp4(frames, video_path, fps=args.video_fps)
+        print(f"video={video_path}")
 
 
 if __name__ == "__main__":

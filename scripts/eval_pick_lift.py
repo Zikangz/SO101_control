@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(ROOT))
 
 from so101_tracking import SO101PickLiftEnv  # noqa: E402
+from video_utils import write_mp4
 
 
 def find_latest_model() -> Path:
@@ -52,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--viewer", action="store_true", help="Show MuJoCo viewer during evaluation.")
     parser.add_argument("--real-time", action="store_true", help="Throttle viewer to simulation time.")
     parser.add_argument("--viewer-speed", type=float, default=1.0)
+    parser.add_argument("--record-video", action="store_true", help="Record the first evaluation episode to mp4.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate for --record-video outputs.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "eval_pick_lift")
     return parser.parse_args()
 
@@ -71,6 +74,7 @@ def make_env(args: argparse.Namespace) -> SO101PickLiftEnv:
         lift_height=args.lift_height,
         virtual_grasp=args.virtual_grasp,
         grasp_threshold=args.grasp_threshold,
+        render_mode="rgb_array" if args.record_video else None,
     )
 
 
@@ -105,6 +109,7 @@ def main() -> None:
         viewer = viewer_context.__enter__()
 
     rows: list[dict[str, float | int | bool]] = []
+    video_frames: list[np.ndarray] = []
     ep_rewards: list[float] = []
     ep_successes: list[float] = []
     ep_max_heights: list[float] = []
@@ -151,6 +156,10 @@ def main() -> None:
                         "goal_z": float(goal[2]),
                     }
                 )
+                if args.record_video and ep == 0:
+                    frame = env.render()
+                    if frame is not None:
+                        video_frames.append(frame)
                 step += 1
                 maybe_sync_viewer(env, viewer, args)
 
@@ -194,6 +203,10 @@ def main() -> None:
     print(f"mean_max_cube_height={float(np.mean(ep_max_heights)):.4f} m")
     print(f"csv={csv_path}")
     print(f"plot={plot_path}")
+    if args.record_video and video_frames:
+        video_path = args.output_dir / "pick_lift_eval_episode0.mp4"
+        write_mp4(video_frames, video_path, fps=args.video_fps)
+        print(f"video={video_path}")
     env.close()
 
 

@@ -203,6 +203,26 @@ The script saves CSV and trajectory plots under:
 so101_mujoco_tracking/outputs/mujoco_planar_control_sim/
 ```
 
+Add `--record-video` to simulator, comparison, IK baseline, training, or
+evaluation commands to export MP4 demos next to the CSV/PNG results. For a quick
+reporting clip without opening the interactive viewer:
+
+```bash
+python so101_mujoco_tracking/scripts/view_so101.py \
+  --model pick_lift \
+  --duration 5 \
+  --record-video
+```
+
+Example generated media paths:
+
+```text
+outputs/mujoco_planar_control_sim/joint_trajectory_tracking.png
+outputs/planar_controller_comparison/controller_comparison.png
+outputs/eval_pick_lift_v1/pick_lift_eval_episode0.png
+outputs/view_so101/pick_lift_view.mp4
+```
+
 Current controller pipeline:
 
 1. Generate an XZ-plane sinusoidal endpoint target.

@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(ROOT))
 
 from so101_tracking import SO101TrackingEnv  # noqa: E402
+from video_utils import write_mp4
 
 
 def find_latest_model() -> Path:
@@ -46,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-center", type=float, nargs=3, default=(0.31, 0.0, 0.20))
     parser.add_argument("--random-half-range", type=float, nargs=3, default=(0.045, 0.055, 0.030))
     parser.add_argument("--deterministic", action="store_true", default=True)
+    parser.add_argument("--record-video", action="store_true", help="Record the first evaluation episode to mp4.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate for --record-video outputs.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "eval")
     return parser.parse_args()
 
@@ -69,10 +72,12 @@ def main() -> None:
         random_segments=args.random_segments,
         random_center=tuple(args.random_center),
         random_half_range=tuple(args.random_half_range),
+        render_mode="rgb_array" if args.record_video else None,
     )
     model = SAC.load(model_path, env=env, device="auto")
 
     rows: list[dict[str, float | int]] = []
+    video_frames: list[np.ndarray] = []
     episode_errors = []
     episode_max_errors = []
     episode_final_errors = []
@@ -103,6 +108,10 @@ def main() -> None:
                     "target_z": float(target[2]),
                 }
             )
+            if args.record_video and ep == 0:
+                frame = env.render()
+                if frame is not None:
+                    video_frames.append(frame)
             step += 1
         episode_errors.append(float(np.mean(errors)))
         episode_max_errors.append(float(np.max(errors)))
@@ -134,6 +143,10 @@ def main() -> None:
     print(f"mean_final_error={float(np.mean(episode_final_errors)):.4f} m")
     print(f"csv={csv_path}")
     print(f"plot={plot_path}")
+    if args.record_video and video_frames:
+        video_path = args.output_dir / "tracking_eval_episode0.mp4"
+        write_mp4(video_frames, video_path, fps=args.video_fps)
+        print(f"video={video_path}")
     env.close()
 
 

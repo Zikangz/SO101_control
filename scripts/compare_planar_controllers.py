@@ -13,7 +13,6 @@ os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "outputs" / ".matplotlib"))
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 SIM_SCRIPT = ROOT / "scripts" / "mujoco_planar_control_sim.py"
 
 
@@ -38,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-rate", type=float, default=100.0)
     parser.add_argument("--start-at-first-target", action="store_true")
     parser.add_argument("--plan-multistart-every-target", action="store_true")
+    parser.add_argument("--record-video", action="store_true", help="Record each controller rollout to mp4.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate for --record-video outputs.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "planar_controller_comparison")
     parser.add_argument("--extra-sim-arg", action="append", default=[], help="Extra argument passed through to mujoco_planar_control_sim.py.")
     return parser.parse_args()
@@ -158,6 +159,9 @@ def run_controller(args: argparse.Namespace, controller: str) -> Path:
         cmd.append("--start-at-first-target")
     if args.plan_multistart_every_target:
         cmd.append("--plan-multistart-every-target")
+    if args.record_video:
+        cmd.append("--record-video")
+        cmd.extend(["--video-fps", str(args.video_fps)])
     cmd.extend(args.extra_sim_arg)
     subprocess.run(cmd, check=True)
     return controller_dir / ("%s.csv" % controller)

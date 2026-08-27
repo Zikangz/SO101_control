@@ -29,6 +29,7 @@ from so101_ros1_bridge.control import JointSafetyFilter
 from so101_ros1_bridge.kinematics import SO101Kinematics
 from so101_ros1_bridge.poses import JOINT_ORDER, SAFE_POSES
 from so101_ros1_bridge.servo import PlanarCartesianServo
+from video_utils import write_mp4
 
 DEFAULT_CONFIG = ROOT / "ros1_ws" / "src" / "so101_ros1_bridge" / "config" / "so101_planar_3dof_gripper.yaml"
 DEFAULT_MODEL = ROOT / "assets" / "so101" / "scene.xml"
@@ -129,6 +130,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-viewer-markers", dest="viewer_markers", action="store_false")
     parser.add_argument("--live-plot", action="store_true", help="Show live target/EE XZ trajectory and error plots.")
     parser.add_argument("--plot-rate", type=float, default=10.0, help="Live plot refresh rate in Hz.")
+    parser.add_argument("--record-video", action="store_true", help="Record the MuJoCo simulation to an mp4 file.")
+    parser.add_argument("--video-fps", type=int, default=30, help="Frame rate used for --record-video outputs.")
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "mujoco_planar_control_sim")
     return parser.parse_args()
@@ -730,6 +733,13 @@ def write_outputs(rows: list[dict[str, float]], plan_rows: list[dict[str, float]
     plot_path = args.output_dir / ("%s_tracking.png" % controller_name)
     fig.savefig(plot_path, dpi=160)
 
+    video_path = None
+    if getattr(args, "record_video", False):
+        recorded_frames = getattr(args, "recorded_frames", None)
+        if recorded_frames:
+            video_path = args.output_dir / ("%s_tracking.mp4" % controller_name)
+            write_mp4(recorded_frames, video_path, fps=getattr(args, "video_fps", 30))
+
     errors = np.array(error_xz, dtype=np.float64)
     print("controller=%s" % controller_name)
     print("duration_s=%.3f" % float(args.duration))
@@ -740,6 +750,8 @@ def write_outputs(rows: list[dict[str, float]], plan_rows: list[dict[str, float]
     print("final_tracking_error_xz_m=%.6f" % float(errors[-1]))
     print("csv=%s" % csv_path)
     print("plot=%s" % plot_path)
+    if video_path is not None:
+        print("video=%s" % video_path)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -852,14 +864,18 @@ def run(args: argparse.Namespace) -> None:
     log_every = max(1, int(round(args.control_rate / max(args.log_rate, 1e-9))))
     total_steps = int(math.ceil((execution_duration + args.post_hold) / control_dt))
     rows = []
+    args.recorded_frames = []
 
     viewer_context = None
     viewer = None
+    renderer = None
     if args.viewer:
         from mujoco import viewer as mujoco_viewer
 
         viewer_context = mujoco_viewer.launch_passive(model, data, show_left_ui=True, show_right_ui=True)
         viewer = viewer_context.__enter__()
+    if args.record_video:
+        renderer = mujoco.Renderer(model, height=480, width=640)
 
     live_plotter = None
     if args.live_plot:
@@ -998,10 +1014,16 @@ def run(args: argparse.Namespace) -> None:
                     if sleep_s > 0.0:
                         time.sleep(sleep_s)
 
+            if renderer is not None:
+                renderer.update_scene(data)
+                args.recorded_frames.append(renderer.render())
+
             clock.advance(control_dt)
     finally:
         if viewer_context is not None:
             viewer_context.__exit__(None, None, None)
+        if renderer is not None:
+            renderer.close()
 
     write_outputs(rows, plan_rows, args)
 

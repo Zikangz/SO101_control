@@ -68,6 +68,7 @@ class SO101TrackingEnv(gym.Env):
         self.step_count = 0
         self.last_action = np.zeros(ARM_DOF, dtype=np.float32)
         self.target_pos = np.zeros(3, dtype=np.float64)
+        self._renderer: mujoco.Renderer | None = None
 
         self.ctrl_min = self.model.actuator_ctrlrange[:, 0].copy()
         self.ctrl_max = self.model.actuator_ctrlrange[:, 1].copy()
@@ -231,6 +232,12 @@ class SO101TrackingEnv(gym.Env):
     def render(self):
         if self.render_mode != "rgb_array":
             return None
-        renderer = mujoco.Renderer(self.model, height=480, width=640)
-        renderer.update_scene(self.data)
-        return renderer.render()
+        if self._renderer is None:
+            self._renderer = mujoco.Renderer(self.model, height=480, width=640)
+        self._renderer.update_scene(self.data)
+        return self._renderer.render()
+
+    def close(self) -> None:
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
