@@ -865,6 +865,8 @@ def run(args: argparse.Namespace) -> None:
     total_steps = int(math.ceil((execution_duration + args.post_hold) / control_dt))
     rows = []
     args.recorded_frames = []
+    video_frame_dt = 1.0 / max(1, int(getattr(args, "video_fps", 30)))
+    next_video_frame_t = 0.0
 
     viewer_context = None
     viewer = None
@@ -1014,9 +1016,10 @@ def run(args: argparse.Namespace) -> None:
                     if sleep_s > 0.0:
                         time.sleep(sleep_s)
 
-            if renderer is not None:
+            if renderer is not None and elapsed + 1e-12 >= next_video_frame_t:
                 renderer.update_scene(data)
                 args.recorded_frames.append(renderer.render())
+                next_video_frame_t += video_frame_dt
 
             clock.advance(control_dt)
     finally:
