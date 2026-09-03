@@ -97,9 +97,9 @@ motor_ids:
   gripper: 6
 
 hardware_calibration:
-  shoulder_pan: {range_min: 718, range_max: 3372, homing_offset: 2039, drive_mode: 0}
-  shoulder_lift: {range_min: 910, range_max: 3307, homing_offset: 2100, drive_mode: 0}
-  elbow_flex: {range_min: 890, range_max: 3084, homing_offset: 1999, drive_mode: 0}
-  wrist_flex: {range_min: 923, range_max: 3261, homing_offset: 2092, drive_mode: 0}
-  wrist_roll: {range_min: 151, range_max: 3943, homing_offset: 1990, drive_mode: 0}
-  gripper: {range_min: 1402, range_max: 2904, homing_offset: 1944, drive_mode: 0}
+  shoulder_pan: {range_min: 798, range_max: 3374, homing_offset: 2074, drive_mode: 0}
+  shoulder_lift: {range_min: 805, range_max: 3190, homing_offset: 2026, drive_mode: 0}
+  elbow_flex: {range_min: 890, range_max: 3077, homing_offset: 2039, drive_mode: 0}
+  wrist_flex: {range_min: 866, range_max: 3206, homing_offset: 2035, drive_mode: 0}
+  wrist_roll: {range_min: 157, range_max: 3945, homing_offset: 2049, drive_mode: 0}
+  gripper: {range_min: 1495, range_max: 2801, homing_offset: 2048, drive_mode: 0}

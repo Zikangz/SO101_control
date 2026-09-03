@@ -34,6 +34,7 @@ logs/
 *.tar
 *.tar.gz
 *.tgz
+*.sha256
 
 # Accidental CLI flag files
 --*

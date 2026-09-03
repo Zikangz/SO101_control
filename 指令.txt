@@ -1,0 +1,491 @@
+# SO101 2026-09-03 当前实验指令
+
+结论：当前推荐基线是 `xz_vertex_diamond, f=0.1, 100x40 mm, z_bias=0.0083`。
+它在不缩小轨迹的情况下优于 edge-vertex 8 和最新 diamond 二维 X/Z 补偿。
+`phasez_v3` 退化，不推荐；`phasexz_v1_safe` 保留为实验结果，不作为当前基线。
+
+最新对比（ignore-start=10）：
+
+| 版本 | mean | RMSE | max | mean Z | Z high-pass | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| const z_bias=0.0083 原始 | 6.486 mm | 6.915 mm | 13.046 mm | -1.051 mm | 0.519 mm | 稳定速度基线 |
+| phasez_v1 | 6.166 mm | 6.447 mm | 10.623 mm | -3.051 mm | 0.633 mm | 有改善 |
+| phasez_v2 原始 | 5.760 mm | 6.040 mm | 9.156 mm | -2.459 mm | 0.572 mm | 当前最佳候选 |
+| phasez_v3 | 6.427 mm | 6.806 mm | 10.518 mm | -2.525 mm | 0.588 mm | 退化，不推荐 |
+| phasez_v2 复测 | 5.686 mm | 5.968 mm | 9.510 mm | -2.457 mm | 0.599 mm | 当前推荐 |
+| phasez_v2 final | 5.742 mm | 6.028 mm | 10.309 mm | -2.678 mm | 0.606 mm | 稳定，可学习 |
+| phasexz_v1_safe | 5.517 mm | 5.953 mm | 10.362 mm | -1.937 mm | 0.550 mm | 均值改善，仍非最终 |
+| const z_bias=0.0083 复测 | 6.267 mm | 6.663 mm | 11.595 mm | -0.498 mm | 0.534 mm | 略更平滑，几何较差 |
+| xz_vertex_diamond + z_bias=0.0083 | 4.700 mm | 5.037 mm | 8.381 mm | -0.604 mm | 0.573 mm | 当前最佳 |
+| xz_vertex_diamond + phasexz_v1_safe | 5.671 mm | 5.967 mm | 9.845 mm | -3.336 mm | 0.577 mm | 回归，不作为基线 |
+
+因此下一步不要继续从 v3 机械地拟合 v4。`phasexz_v1_safe` 可用，但只是第一版：
+edge 路径里平均误差下降，RMSE 基本持平，max 未改善；diamond 路径里二维 X/Z 补偿反而回归。
+`xz_vertex_diamond + z_bias=0.0083` 在不缩小轨迹的情况下明显改善几何误差，是当前最佳路线。
+
+已生成二维补偿初版：
+
+```bash
+/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_edge_vertex8_f100_x050_z020_v1.json
+```
+
+该 profile 来自两条稳定 `phasez_v2` CSV，使用 `harmonics=2`、`learning-rate=0.5`、
+`max-abs-x-bias=0.006`、`max-abs-z-bias=0.012`。因为一次 validate 从错误 IK 分支进入
+腕部限位附近，实际测试先用更保守的 safe 版本，并在所有测试前显式回到 `ready` 分支：
+
+```bash
+/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_edge_vertex8_f100_x050_z020_v1_safe.json
+```
+
+注意：这里不是缩小轨迹，`x-amplitude=0.050`、`z-amplitude=0.020` 不变；只是先减小补偿量，
+并把启动分支固定到 `ready`。
+
+## 0. 每个终端先执行
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+```
+
+## 1. 终端 A：启动硬件桥（当前默认，不覆盖 PID）
+
+说明：这个脚本只打开 torque，不在连接时写 P/I/D。舵机内部位置 PID 仍然工作；这里的
+“不使用 PID”是“不覆盖舵机当前 EEPROM PID 参数”。
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export PORT=/dev/ttyACM0
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+
+SO101_COMMAND_RATE_HZ=180 \
+SO101_FEEDBACK_READ_RATE_HZ=25 \
+SO101_LPF_ALPHA=1.0 \
+SO101_SERVO_SPEED=500 \
+SO101_SERVO_ACCELERATION=25 \
+/home/zzk/ZZK/SO101/scripts/run_ros_hardware_bridge_no_pid.sh "$PORT"
+```
+
+## 2. 终端 B：实时绘图
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --live \
+  --history-seconds 120 \
+  --update-rate-hz 15 \
+  --reset-on-trajectory \
+  --save /home/zzk/ZZK/SO101/so101_plots/so101_live_trajectory.png
+```
+
+## 2.5 上电后先回到 ready / 锁定当前姿态
+
+如果上电后视觉上没有到中位，这是正常的：当前硬件桥只打开 torque，不会自动把机械臂拉到中位。
+启动硬件桥后，先执行下面命令让机械臂进入 ROS 里的安全零位分支：
+
+```bash
+cd /home/zzk/ZZK/SO101
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+rosrun so101_ros1_bridge so101_control_cli.py state
+rosrun so101_ros1_bridge so101_control_cli.py named ready --duration 4.0
+sleep 1
+rosrun so101_ros1_bridge so101_control_cli.py state
+rosrun so101_ros1_bridge so101_control_cli.py freeze
+```
+
+如果 `ready` 姿态视觉上明显不对，先不要跑轨迹；回头检查中位/校准，而不是放宽 IK 限位。
+
+## 3. 终端 C：旧基线复测 phasez_v2（仅对照）
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasez_v2_repeat_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_edge_vertex8 \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --prep-duration 4.0 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0 \
+  --phase-z-compensation-profile /tmp/so101_phase_z_edge_vertex8_f100_x050_z020_v2.json \
+  --csv "$CSV"
+
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+
+mkdir -p /home/zzk/ZZK/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir /home/zzk/ZZK/SO101/so101_plots
+```
+
+判断：最新复测已经满足这个条件，v2 暂定为当前桌面最佳参数。注意这次 v2 复测有一个
+`10.7 V` 的瞬时低电压样本，后续上无人机前需要继续观察供电和线束。
+
+## 4. 终端 D：测试二维 X/Z phase compensation v1
+
+先做不运动的 IK/限位预检：
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+PROFILE=/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_edge_vertex8_f100_x050_z020_v1_safe.json
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --validate-only \
+  --validate-samples 720 \
+  --execution-mode joint_trajectory \
+  --pattern xz_edge_vertex8 \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0 \
+  --phase-xz-compensation-profile "$PROFILE" \
+  --csv /tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasexz_v1_validate.csv
+```
+
+预检显示 `PRECHECK PASSED` 后，再实测：
+
+```bash
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasexz_v1_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_edge_vertex8 \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --prep-duration 4.0 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0 \
+  --phase-xz-compensation-profile "$PROFILE" \
+  --csv "$CSV"
+
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+
+mkdir -p /home/zzk/ZZK/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir /home/zzk/ZZK/SO101/so101_plots
+
+echo "$CSV"
+ls -lt /home/zzk/ZZK/SO101/so101_plots | head
+```
+
+判断：如果 RMSE 小于 `5.5 mm`、max 小于 `9 mm`、Z high-pass 仍小于 `0.0007 m`，
+则 `phasexz_v1` 优于当前 `phasez_v2`；否则回退到 `phasez_v2`。
+
+## 4.5 同尺寸改轨迹形状：xz_vertex_diamond
+
+如果不想通过缩小幅值来避开抖动/限位组合，可以先换轨迹形状。这个轨迹仍是 `100 x 40 mm`、
+`f=0.1`，但经过点为“上中点 -> 右中点 -> 下中点 -> 左中点”，避免 X 边缘同时处在 Z 极值。
+第一次先不加二维学习补偿，只用常量 Z bias 采样：
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_zbias0083_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --validate-only \
+  --validate-samples 720 \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0.0083 \
+  --csv /tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_validate.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --prep-duration 4.0 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0.0083 \
+  --csv "$CSV"
+
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+mkdir -p /home/zzk/ZZK/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir /home/zzk/ZZK/SO101/so101_plots
+echo "$CSV"
+```
+
+如果这个形状视觉更稳、RMSE 不比 `phasez_v2` 差太多，再用它拟合自己的二维补偿：
+
+```bash
+PROFILE=/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_vertex_diamond_f100_x050_z020_v1.json
+
+rosrun so101_ros1_bridge so101_fit_phase_xz_compensation.py "$CSV" \
+  --pattern xz_vertex_diamond \
+  --frequency 0.100 \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --harmonics 1 \
+  --learning-rate 0.35 \
+  --max-abs-x-bias 0.003 \
+  --max-abs-z-bias 0.010 \
+  --output "$PROFILE"
+```
+
+当前已经根据 `xz_vertex_diamond + z_bias=0.0083` 实测生成并测试了 diamond 专属二维补偿：
+
+```bash
+/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_vertex_diamond_f100_x050_z020_v1_safe.json
+```
+
+测试结论：safe 版本实测文件为
+`/tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_phasexz_v1_safe_20260903_222747.csv`，
+结果为 mean `5.671 mm`、RMSE `5.967 mm`、max `9.845 mm`，比常量 `z_bias=0.0083`
+的 diamond 基线差。因此这组命令只用于复现实验或做对照，不作为后续默认运行指令。
+
+如需复现，先预检：
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+PROFILE=/home/zzk/ZZK/SO101/calibration/phase_compensation/so101_phase_xz_vertex_diamond_f100_x050_z020_v1_safe.json
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --validate-only \
+  --validate-samples 720 \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0 \
+  --phase-xz-compensation-profile "$PROFILE" \
+  --csv /tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_phasexz_v1_safe_validate.csv
+```
+
+预检通过后实测。注意：`--validate-only` 只做 IK/限位预检查，不会驱动机械臂，也不会生成下面这个
+带时间戳的实测 CSV；只有运行本段不带 `--validate-only` 的命令，才会生成可分析的实测文件。
+
+```bash
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_phasexz_v1_safe_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --prep-duration 4.0 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0 \
+  --phase-xz-compensation-profile "$PROFILE" \
+  --csv "$CSV"
+
+if [ ! -s "$CSV" ]; then
+  echo "ERROR: 实测 CSV 未生成：$CSV"
+  echo "请先看上方 so101_ee_sine_test.py 是否中途报错，且确认终端 A 的 hardware bridge 仍在运行。"
+  exit 1
+fi
+
+ls -lh "$CSV"
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+mkdir -p /home/zzk/ZZK/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir /home/zzk/ZZK/SO101/so101_plots
+echo "$CSV"
+```
+
+判断：这次已经没有提升，回退到 `xz_vertex_diamond + z_bias=0.0083`。
+
+## 5. 当前默认基线：重复 diamond + 常量 z_bias
+
+```bash
+cd /home/zzk/ZZK/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_zbias0083_repeat_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0.0083 \
+  --csv "$CSV"
+
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+
+mkdir -p /home/zzk/ZZK/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir /home/zzk/ZZK/SO101/so101_plots
+```
+
+## 6. 暂时不要再使用的指令
+
+不推荐继续使用：
+
+```bash
+--phase-z-compensation-profile /tmp/so101_phase_z_edge_vertex8_f100_x050_z020_v3.json
+```
+
+原因：v3 实测比 v2 复测退化，RMSE 从 `5.968 mm` 回升到 `6.806 mm`。
+
+## 7. 如果今天还要继续提高精度
+
+不要再简单做 `v3 -> v4`。PID 和低通今天都不作为主线：当前舵机内部 PID 正常工作，
+`SO101_LPF_ALPHA=1.0` 保持不滤波。推荐顺序：
+
+1. 保留 `phasez_v2` 作为当前基线，不再使用 `phasez_v3`。
+2. 先监测供电：确保运动中没有持续低于 `11.3 V` 的掉压。
+3. 开发二维补偿：`delta_x(phase)` + `delta_z(phase)`，目标 RMSE 小于 `5.5 mm`、max 小于 `9 mm`。
+4. 如果误差主要表现为整条曲线滞后，再做小幅 phase lead，而不是提高反馈增益。
+5. 如果上无人机，桌面 phase profile 只能作为初值，必须加入 UAV 姿态、加速度、载荷状态。
+
+供电监视命令，硬件桥启动后另开一个终端执行：
+
+```bash
+cd /home/zzk/ZZK/SO101
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source /home/zzk/ZZK/SO101/ros1_ws/devel/setup.bash
+
+rosrun so101_ros1_bridge so101_servo_watch.py all --rate 2
+```
+
+## 8. 实验结束后再打包
+
+今天关键 PNG 图像已同步到仓库内：
+
+```bash
+/home/zzk/ZZK/SO101/so101_plots
+```
+
+实验全部结束后，再生成最终交接包：
+
+```bash
+cd /home/zzk/ZZK/SO101
+scripts/package_so101_handoff.sh
+```
+
+打包后保存最新 `/tmp/so101_handoff_*.tar.gz` 和 `.sha256`。

@@ -36,6 +36,7 @@ catkin_install_python(PROGRAMS
   scripts/so101_follow_joint_trajectory_server.py
   scripts/so101_plot_ee_trajectory.py
   scripts/so101_fit_phase_z_compensation.py
+  scripts/so101_fit_phase_xz_compensation.py
   scripts/so101_fit_backlash_compensation.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

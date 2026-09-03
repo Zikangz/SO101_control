@@ -290,6 +290,19 @@ def _target_offset(args, elapsed):
     x_amp = args.x_amplitude if args.x_amplitude is not None else args.amplitude
     y_amp = args.y_amplitude if args.y_amplitude is not None else 0.0
     z_amp = args.z_amplitude if args.z_amplitude is not None else args.amplitude
+
+    def eased_segment(points):
+        phase = (elapsed * args.frequency) % 1.0
+        scaled = phase * len(points)
+        idx = int(math.floor(scaled)) % len(points)
+        frac = scaled - math.floor(scaled)
+        # Half-cosine interpolation gives zero velocity at each vertex, which
+        # makes cornered diagnostic paths less harsh on the low-cost servos.
+        ease = 0.5 - 0.5 * math.cos(math.pi * frac)
+        start = points[idx]
+        end = points[(idx + 1) % len(points)]
+        return [start[i] + (end[i] - start[i]) * ease for i in range(3)]
+
     if args.pattern == "axis":
         offset = [0.0, 0.0, 0.0]
         offset[{"x": 0, "y": 1, "z": 2}[args.axis]] = args.amplitude * math.sin(w * elapsed)
@@ -298,6 +311,26 @@ def _target_offset(args, elapsed):
         return [x_amp * math.cos(w * elapsed), y_amp * math.sin(w * elapsed), z_amp * math.sin(w * elapsed)]
     if args.pattern == "xz_sine":
         return [x_amp * math.sin(w * elapsed), 0.0, z_amp * math.sin(2.0 * w * elapsed)]
+    if args.pattern == "xz_edge_vertex8":
+        return [x_amp * math.sin(w * elapsed), 0.0, z_amp * math.cos(2.0 * w * elapsed)]
+    if args.pattern == "xz_vertex_diamond":
+        return eased_segment(
+            [
+                [0.0, 0.0, z_amp],
+                [x_amp, 0.0, 0.0],
+                [0.0, 0.0, -z_amp],
+                [-x_amp, 0.0, 0.0],
+            ]
+        )
+    if args.pattern == "xz_zigzag":
+        return eased_segment(
+            [
+                [-x_amp, 0.0, z_amp],
+                [x_amp, 0.0, z_amp],
+                [-x_amp, 0.0, -z_amp],
+                [x_amp, 0.0, -z_amp],
+            ]
+        )
     if args.pattern == "figure8":
         return [x_amp * math.sin(w * elapsed), y_amp * math.sin(w * elapsed), z_amp * 0.5 * math.sin(2.0 * w * elapsed)]
     if args.pattern == "lissajous":
@@ -309,6 +342,14 @@ def _target_offset(args, elapsed):
     raise RuntimeError("Unsupported pattern: %s" % args.pattern)
 
 
+def _phase_profile_value(coefficients, harmonics, phase):
+    value = float(coefficients[0])
+    for k in range(1, int(harmonics) + 1):
+        value += float(coefficients[2 * k - 1]) * math.sin(k * phase)
+        value += float(coefficients[2 * k]) * math.cos(k * phase)
+    return value
+
+
 def _z_feedforward_bias(args, elapsed, ramp_scale):
     profile = getattr(args, "phase_z_profile", None)
     if profile is None:
@@ -316,11 +357,24 @@ def _z_feedforward_bias(args, elapsed, ramp_scale):
     phase = 2.0 * math.pi * float(profile["frequency_hz"]) * float(elapsed)
     harmonics = int(profile["harmonics"])
     coefficients = profile["coefficients_m"]
-    bias = float(coefficients[0])
-    for k in range(1, harmonics + 1):
-        bias += float(coefficients[2 * k - 1]) * math.sin(k * phase)
-        bias += float(coefficients[2 * k]) * math.cos(k * phase)
+    bias = _phase_profile_value(coefficients, harmonics, phase)
     return float(ramp_scale) * bias
+
+
+def _feedforward_biases(args, elapsed, ramp_scale):
+    profile = getattr(args, "phase_xz_profile", None)
+    if profile is not None:
+        phase = 2.0 * math.pi * float(profile["frequency_hz"]) * float(elapsed)
+        harmonics = int(profile["harmonics"])
+        x_bias = _phase_profile_value(profile["coefficients_x_m"], harmonics, phase)
+        z_bias = _phase_profile_value(profile["coefficients_z_m"], harmonics, phase)
+        return [float(ramp_scale) * x_bias, 0.0, float(ramp_scale) * z_bias]
+    return [0.0, 0.0, _z_feedforward_bias(args, elapsed, ramp_scale)]
+
+
+def _command_target(args, target, elapsed, ramp_scale):
+    bias = _feedforward_biases(args, elapsed, ramp_scale)
+    return [float(target[idx]) + bias[idx] for idx in range(3)]
 
 
 def _configure_phase_z_profile(args, center):
@@ -357,6 +411,51 @@ def _configure_phase_z_profile(args, center):
     if harmonics < 0 or len(coefficients) != 1 + 2 * harmonics:
         raise RuntimeError("phase profile coefficients are invalid")
     args.phase_z_profile = profile
+
+
+def _configure_phase_xz_profile(args, center):
+    args.phase_xz_profile = None
+    path = getattr(args, "phase_xz_compensation_profile", "")
+    if not path:
+        return
+    if abs(float(args.z_feedforward_bias)) > 1e-9:
+        raise RuntimeError("--phase-xz-compensation-profile already contains the full Z bias; use --z-feedforward-bias 0")
+    if getattr(args, "phase_z_compensation_profile", ""):
+        raise RuntimeError("Use either --phase-z-compensation-profile or --phase-xz-compensation-profile, not both")
+    try:
+        with open(path) as handle:
+            profile = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Cannot load phase X/Z compensation profile %s: %s" % (path, exc))
+    if profile.get("schema") != "so101_phase_xz_compensation_v1":
+        raise RuntimeError("Unsupported phase X/Z compensation profile schema")
+    expected = {
+        "pattern": args.pattern,
+        "frequency_hz": float(args.frequency),
+        "center_xyz_m": [float(value) for value in center],
+        "x_amplitude_m": float(args.x_amplitude if args.x_amplitude is not None else args.amplitude),
+        "z_amplitude_m": float(args.z_amplitude if args.z_amplitude is not None else args.amplitude),
+    }
+    if profile.get("pattern") != expected["pattern"]:
+        raise RuntimeError("phase X/Z profile pattern does not match this test")
+    for key in ("frequency_hz", "x_amplitude_m", "z_amplitude_m"):
+        if abs(float(profile.get(key, float("nan"))) - expected[key]) > 1e-6:
+            raise RuntimeError("phase X/Z profile %s does not match this test" % key)
+    profile_center = profile.get("center_xyz_m", [])
+    if len(profile_center) != 3 or max(abs(float(profile_center[idx]) - expected["center_xyz_m"][idx]) for idx in range(3)) > 1e-6:
+        raise RuntimeError("phase X/Z profile center does not match this test")
+    harmonics = int(profile.get("harmonics", -1))
+    coefficients_x = profile.get("coefficients_x_m", [])
+    coefficients_z = profile.get("coefficients_z_m", [])
+    expected_count = 1 + 2 * harmonics
+    if harmonics < 0 or len(coefficients_x) != expected_count or len(coefficients_z) != expected_count:
+        raise RuntimeError("phase X/Z profile coefficients are invalid")
+    args.phase_xz_profile = profile
+
+
+def _configure_compensation_profiles(args, center):
+    _configure_phase_z_profile(args, center)
+    _configure_phase_xz_profile(args, center)
 
 
 def _joint_limit_margins(solution, limits, joint_names):
@@ -507,7 +606,26 @@ def _validate_trajectory(args, cache):
     else:
         center = list(args.center)
         center_source = "cli"
-    _configure_phase_z_profile(args, center)
+    _configure_compensation_profiles(args, center)
+    center_bias_scale = 0.0 if (args.phase_z_profile is not None or getattr(args, "phase_xz_profile", None) is not None) else 1.0
+    command_center = _command_target(args, center, 0.0, center_bias_scale)
+    validation_seed_joints = current_joints
+    if args.prep_pose != "none":
+        validation_seed_joints = _complete_joint_seed(
+            home_positions,
+            locked_joints,
+            SAFE_POSES[args.prep_pose],
+            current_joints=None,
+        )
+    center_solution, _center_err = _solve_center_pose(
+        kin,
+        active_joints,
+        locked_joints,
+        home_positions,
+        validation_seed_joints,
+        command_center,
+        args,
+    )
 
     rows = []
     ik_accepted_count = 0
@@ -519,14 +637,14 @@ def _validate_trajectory(args, cache):
     joint_max = {}
     joint_min_margin = {}
     limit_margin_failures = []
-    last_solution = dict(seed)
+    last_solution = dict(center_solution)
     samples = max(2, int(args.validate_samples))
     for sample_idx in range(samples):
         elapsed = args.duration * float(sample_idx) / float(samples - 1)
-        offset = _target_offset(args, elapsed)
+        ramp_scale = _ramp_scale(elapsed, args.ramp_duration)
+        offset = [value * ramp_scale for value in _target_offset(args, elapsed)]
         target = [center[idx] + offset[idx] for idx in range(3)]
-        command_target = list(target)
-        command_target[2] += _z_feedforward_bias(args, elapsed, 1.0)
+        command_target = _command_target(args, target, elapsed, ramp_scale)
         converged, solution, err, iters = kin.solve_ik_position(
             command_target,
             last_solution,
@@ -544,9 +662,9 @@ def _validate_trajectory(args, cache):
         accepted = ik_accepted and margin_ok
         if ik_accepted:
             ik_accepted_count += 1
-            last_solution = dict(solution)
         if accepted:
             execution_accepted_count += 1
+            last_solution = dict(solution)
         elif ik_accepted and not margin_ok:
             limit_margin_failures.append((sample_idx, elapsed, target, min_margin, dict(solution)))
         if converged:
@@ -573,12 +691,15 @@ def _validate_trajectory(args, cache):
             "offset_x": offset[0],
             "offset_y": offset[1],
             "offset_z": offset[2],
+            "ramp_scale": ramp_scale,
             "target_x": target[0],
             "target_y": target[1],
             "target_z": target[2],
             "command_target_x": command_target[0],
             "command_target_y": command_target[1],
             "command_target_z": command_target[2],
+            "x_feedforward_bias": command_target[0] - target[0],
+            "y_feedforward_bias": command_target[1] - target[1],
             "z_feedforward_bias": command_target[2] - target[2],
             "ik_converged": converged,
             "ik_commanded": ik_accepted,
@@ -608,6 +729,7 @@ def _validate_trajectory(args, cache):
     print("  max_ik_error_m:       %.6f" % max_err)
     print("  command_tolerance_m:  %.6f" % ik_command_tolerance_m)
     print("  phase_z_profile:      %s" % ("enabled" if args.phase_z_profile is not None else "disabled"))
+    print("  phase_xz_profile:     %s" % ("enabled" if getattr(args, "phase_xz_profile", None) is not None else "disabled"))
     print("  joint_limit_margin_m: %.6f" % float(args.joint_limit_margin))
     print("  joint_ranges_rad:")
     for name in active_joints:
@@ -715,8 +837,7 @@ def _build_planned_joint_path(args, cache, center, seed_positions=None):
         ramp_scale = _ramp_scale(elapsed, args.ramp_duration)
         offset = [value * ramp_scale for value in _target_offset(args, elapsed)]
         target = [center[axis] + offset[axis] for axis in range(3)]
-        command_target = list(target)
-        command_target[2] += _z_feedforward_bias(args, elapsed, ramp_scale)
+        command_target = _command_target(args, target, elapsed, ramp_scale)
         converged, solution, err, iters = kin.solve_ik_position(
             command_target,
             last_solution,
@@ -760,6 +881,8 @@ def _build_planned_joint_path(args, cache, center, seed_positions=None):
             "command_target_x": command_target[0],
             "command_target_y": command_target[1],
             "command_target_z": command_target[2],
+            "x_feedforward_bias": command_target[0] - target[0],
+            "y_feedforward_bias": command_target[1] - target[1],
             "z_feedforward_bias": command_target[2] - target[2],
             "offset_x": offset[0],
             "offset_y": offset[1],
@@ -824,8 +947,7 @@ def _record_runtime_row(args, cache, center, elapsed, plan_row=None):
     ramp_scale = _ramp_scale(elapsed, args.ramp_duration)
     offset = [value * ramp_scale for value in _target_offset(args, elapsed)]
     target = [center[idx] + offset[idx] for idx in range(3)]
-    command_target = list(target)
-    command_target[2] += _z_feedforward_bias(args, elapsed, ramp_scale)
+    command_target = _command_target(args, target, elapsed, ramp_scale)
     ee, joints, commanded_joints, servo_status, kin_status = cache.snapshot()
     measured = _pose_xyz(ee) if ee is not None else ["", "", ""]
     row = {
@@ -844,6 +966,8 @@ def _record_runtime_row(args, cache, center, elapsed, plan_row=None):
         "command_target_x": command_target[0],
         "command_target_y": command_target[1],
         "command_target_z": command_target[2],
+        "x_feedforward_bias": command_target[0] - target[0],
+        "y_feedforward_bias": command_target[1] - target[1],
         "z_feedforward_bias": command_target[2] - target[2],
         "measured_x": measured[0],
         "measured_y": measured[1],
@@ -857,7 +981,7 @@ def _record_runtime_row(args, cache, center, elapsed, plan_row=None):
     }
     if plan_row:
         for key, value in plan_row.items():
-            if key.startswith("planned_") or key.startswith("command_target_") or key in ("ik_converged", "ik_commanded", "ik_approximate", "ik_error_m", "z_feedforward_bias"):
+            if key.startswith("planned_") or key.startswith("command_target_") or key in ("ik_converged", "ik_commanded", "ik_approximate", "ik_error_m", "x_feedforward_bias", "y_feedforward_bias", "z_feedforward_bias"):
                 row[key] = value
     if ee is not None:
         errors = [float(measured[idx]) - target[idx] for idx in range(3)]
@@ -898,6 +1022,8 @@ def _run_center_tracking_diagnostic(args, cache, center, command_center, center_
             "command_target_x": command_center[0],
             "command_target_y": command_center[1],
             "command_target_z": command_center[2],
+            "x_feedforward_bias": command_center[0] - center[0],
+            "y_feedforward_bias": command_center[1] - center[1],
             "z_feedforward_bias": command_center[2] - center[2],
             "measured_x": measured[0],
             "measured_y": measured[1],
@@ -945,8 +1071,8 @@ def _run_joint_trajectory_mode(args, cache, center):
         _ik_max_iters,
     ) = _load_kinematics_context(args)
     _, current_joints, _, _, _ = cache.snapshot()
-    command_center = list(center)
-    command_center[2] += _z_feedforward_bias(args, 0.0, 0.0 if args.phase_z_profile is not None else 1.0)
+    center_bias_scale = 0.0 if (args.phase_z_profile is not None or getattr(args, "phase_xz_profile", None) is not None) else 1.0
+    command_center = _command_target(args, center, 0.0, center_bias_scale)
     center_solution, center_err = _solve_center_pose(
         kin, active_joints, locked_joints, home_positions, current_joints, command_center, args
     )
@@ -955,8 +1081,8 @@ def _run_joint_trajectory_mode(args, cache, center):
     if args.move_to_center_duration > 0.0:
         print(
             "Moving to planned trajectory center with joint-space minimum-jerk, "
-            "center_ik_error_m=%.6f, z_feedforward_bias=%.4fm"
-            % (center_err, command_center[2] - center[2])
+            "center_ik_error_m=%.6f, x_feedforward_bias=%.4fm, z_feedforward_bias=%.4fm"
+            % (center_err, command_center[0] - center[0], command_center[2] - center[2])
         )
         _publish_joint_pose(joint_pub, center_pose, args.move_to_center_duration)
         center_ready = _wait_joints_close(
@@ -1049,7 +1175,7 @@ def run(args):
     _prepare_pose(cache, args)
     center_msg = _latest_center(cache, args.timeout)
     center = _pose_xyz(center_msg) if args.center is None else list(args.center)
-    _configure_phase_z_profile(args, center)
+    _configure_compensation_profiles(args, center)
     frame_id = center_msg.header.frame_id or args.frame
     orientation = center_msg.pose.orientation
 
@@ -1106,7 +1232,8 @@ def run(args):
         ramp_scale = _ramp_scale(elapsed, args.ramp_duration)
         offset = [value * ramp_scale for value in _target_offset(args, elapsed)]
         target = [center[idx] + offset[idx] for idx in range(3)]
-        _publish_target(pub, frame_id, target, orientation)
+        command_target = _command_target(args, target, elapsed, ramp_scale)
+        _publish_target(pub, frame_id, command_target, orientation)
 
         ee, joints, commanded_joints, servo_status, kin_status = cache.snapshot()
         measured = _pose_xyz(ee) if ee is not None else ["", "", ""]
@@ -1122,6 +1249,12 @@ def run(args):
             "target_x": target[0],
             "target_y": target[1],
             "target_z": target[2],
+            "command_target_x": command_target[0],
+            "command_target_y": command_target[1],
+            "command_target_z": command_target[2],
+            "x_feedforward_bias": command_target[0] - target[0],
+            "y_feedforward_bias": command_target[1] - target[1],
+            "z_feedforward_bias": command_target[2] - target[2],
             "measured_x": measured[0],
             "measured_y": measured[1],
             "measured_z": measured[2],
@@ -1165,7 +1298,11 @@ def run(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(description="SO101 Cartesian end-effector sine tracking test")
-    parser.add_argument("--pattern", choices=["axis", "xz_sine", "circle", "figure8", "lissajous"], default="figure8")
+    parser.add_argument(
+        "--pattern",
+        choices=["axis", "xz_sine", "xz_edge_vertex8", "xz_vertex_diamond", "xz_zigzag", "circle", "figure8", "lissajous"],
+        default="figure8",
+    )
     parser.add_argument("--axis", choices=["x", "y", "z"], default="z")
     parser.add_argument("--center", nargs=3, type=float, default=None, help="Absolute center xyz in base_link; default: current EE pose")
     parser.add_argument("--frame", default="base_link")
@@ -1192,6 +1329,7 @@ def build_parser():
     parser.add_argument("--planning-ik-tolerance", type=float, default=0.00005, help="IK tolerance for precomputed joint_trajectory mode, in metres")
     parser.add_argument("--z-feedforward-bias", type=float, default=0.0, help="Metres added to command target Z for static gravity/FK bias compensation")
     parser.add_argument("--phase-z-compensation-profile", default="", help="Bench-only Fourier Z bias profile produced by so101_fit_phase_z_compensation.py")
+    parser.add_argument("--phase-xz-compensation-profile", default="", help="Bench-only Fourier X/Z bias profile produced by so101_fit_phase_xz_compensation.py")
     parser.add_argument(
         "--joint-limit-margin",
         type=float,

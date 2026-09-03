@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fit a bounded phase-dependent Z feedforward profile from one bench CSV.
 
-The profile is intentionally tied to one xz_sine trajectory. It is a bench
-calibration aid, not a general gravity controller and must not be used after
-the arm is mounted on a moving or tilted UAV.
+The profile is intentionally tied to one fixed periodic trajectory. It is a
+bench calibration aid, not a general gravity controller and must not be used
+after the arm is mounted on a moving or tilted UAV.
 """
 
 import argparse
@@ -13,6 +13,9 @@ import math
 import statistics
 
 import numpy as np
+
+
+SUPPORTED_PATTERNS = ["xz_sine", "xz_edge_vertex8", "xz_vertex_diamond", "xz_zigzag"]
 
 
 def _f(row, key):
@@ -30,9 +33,19 @@ def _profile_value(coefficients, phase, harmonics):
     return value
 
 
+def _infer_pattern(rows):
+    patterns = sorted({row.get("pattern", "") for row in rows if row.get("pattern", "")})
+    if len(patterns) == 1:
+        return patterns[0]
+    if not patterns:
+        raise RuntimeError("CSV has no pattern column; pass --pattern explicitly")
+    raise RuntimeError("CSV contains multiple patterns; pass --pattern explicitly")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Fit a bounded SO101 xz_sine Z compensation profile")
+    parser = argparse.ArgumentParser(description="Fit a bounded SO101 periodic-path Z compensation profile")
     parser.add_argument("csv")
+    parser.add_argument("--pattern", choices=SUPPORTED_PATTERNS, default="", help="Trajectory pattern; default: infer from CSV")
     parser.add_argument("--frequency", type=float, required=True, help="Hz used by the recorded test")
     parser.add_argument("--center", nargs=3, type=float, required=True, help="m, same center used by the recorded test")
     parser.add_argument("--x-amplitude", type=float, required=True, help="m, half width")
@@ -48,6 +61,9 @@ def main():
 
     with open(args.csv, newline="") as handle:
         rows = list(csv.DictReader(handle))
+    pattern = args.pattern or _infer_pattern(rows)
+    if pattern not in SUPPORTED_PATTERNS:
+        raise RuntimeError("unsupported pattern in CSV: %s" % pattern)
     elapsed_values = [_f(row, "elapsed") for row in rows]
     elapsed_values = [value for value in elapsed_values if value is not None]
     if not elapsed_values:
@@ -95,7 +111,7 @@ def main():
     payload = {
         "schema": "so101_phase_z_compensation_v1",
         "warning": "bench-only; invalidate after payload, temperature, UAV attitude, or motion condition changes",
-        "pattern": "xz_sine",
+        "pattern": pattern,
         "frequency_hz": float(args.frequency),
         "center_xyz_m": [float(value) for value in args.center],
         "x_amplitude_m": float(args.x_amplitude),

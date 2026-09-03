@@ -1,0 +1,44 @@
+{
+  "center_xyz_m": [
+    0.38,
+    0.0,
+    0.16
+  ],
+  "coefficients_x_m": [
+    6.38388529601531e-05,
+    0.00026983022828574055,
+    0.0035537389267459507,
+    3.089250878028855e-05,
+    -0.00027304075145953663
+  ],
+  "coefficients_z_m": [
+    0.006275570957158219,
+    0.0013744508361958898,
+    -0.0006088957014025988,
+    -0.004279824253465075,
+    -0.00035520491385985874
+  ],
+  "frequency_hz": 0.1,
+  "harmonics": 2,
+  "learning_rate": 0.5,
+  "max_abs_x_bias_m": 0.003767598428843497,
+  "max_abs_z_bias_m": 0.012000000000000002,
+  "pattern": "xz_edge_vertex8",
+  "schema": "so101_phase_xz_compensation_v1",
+  "source_csvs": [
+    "/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasez_v2_repeat_20260903_203926.csv",
+    "/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasez_v2_final_20260903_205926.csv"
+  ],
+  "source_error_x_rmse_m": 0.005113931116561606,
+  "source_error_z_rmse_m": 0.003286386863707375,
+  "source_x_bias_median_m": -5.4985460629097815e-12,
+  "source_z_bias_median_m": 0.006385707429839765,
+  "usable_samples": 5399,
+  "usable_samples_by_csv": {
+    "/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasez_v2_final_20260903_205926.csv": 2699,
+    "/tmp/so101_ee_xz_edge_vertex8_f100_x050_z020_phasez_v2_repeat_20260903_203926.csv": 2700
+  },
+  "warning": "bench-only; invalidate after payload, temperature, UAV attitude, or motion condition changes",
+  "x_amplitude_m": 0.05,
+  "z_amplitude_m": 0.02
+}
