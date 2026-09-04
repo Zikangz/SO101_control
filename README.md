@@ -31,6 +31,269 @@ The current implementation deliberately does not convert the upstream ROS2 stack
 - `so101_ros1_bridge`: ROS1 nodes for JointState publication, joint position/delta commands, FK/IK, locked joints, velocity limits, home/freeze/relax, scripted safety poses, and emergency stop.
 - `third_party/`: upstream references only. Do not edit these directly.
 
+## Jetson Xavier NX Deploy
+
+Target platform for the current handoff:
+
+- Jetson Xavier NX with Ubuntu 20.04.
+- ROS Noetic installed from the Ubuntu 20.04 ROS packages.
+- Python 3.8 from the system ROS environment.
+- SO101 follower connected as `/dev/ttyACM0` unless udev assigns another port.
+- Separate matched servo power supply for the 12V follower arm. Do not power the servos from Jetson. Use a common ground between Jetson/PX4 and the servo supply before UAV integration.
+
+This is a Jetson-deployable SO101 arm-side baseline, not a final aerial-flight whole-body controller. Use it first for bench testing, no-prop vehicle testing, logging, power validation, and later PX4/MAVROS integration.
+
+### Option A: deploy from GitHub
+
+Use the handoff branch pushed after the 2026-09-03 experiments:
+
+```bash
+cd ~
+git clone -b so101-aerial-handoff-20260903 git@github.com:Zikangz/SO101_control.git SO101
+cd ~/SO101
+export SO101_ROOT="$PWD"
+```
+
+If SSH keys are not configured on the Jetson, use HTTPS instead:
+
+```bash
+cd ~
+git clone -b so101-aerial-handoff-20260903 https://github.com/Zikangz/SO101_control.git SO101
+cd ~/SO101
+export SO101_ROOT="$PWD"
+```
+
+### Option B: deploy from the local tarball
+
+Copy `so101_jetson_deploy_20260904.tar.gz` to the Jetson, then run:
+
+```bash
+cd ~
+mkdir -p SO101
+tar -xzf so101_jetson_deploy_20260904.tar.gz -C SO101
+cd ~/SO101
+export SO101_ROOT="$PWD"
+```
+
+Verify the package if the `.sha256` file is copied with it:
+
+```bash
+sha256sum -c so101_jetson_deploy_20260904.tar.gz.sha256
+```
+
+### Install dependencies and build
+
+Run these commands in a normal terminal. Do not activate the LeRobot conda environment while building or running ROS Noetic nodes.
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+source /opt/ros/noetic/setup.bash
+
+python3 -m pip install --user -U \
+  "importlib-metadata>=6.8,<8" \
+  "setuptools>=65,<70" \
+  "wheel>=0.38,<0.46"
+
+python3 -m pip install --user -r requirements-noetic.txt
+
+cd ros1_ws
+catkin_make
+source devel/setup.bash
+```
+
+Optional one-command bootstrap after ROS Noetic is installed:
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+scripts/bootstrap_noetic.sh
+source ros1_ws/devel/setup.bash
+```
+
+### Check the port and servos
+
+Plug in the follower arm USB adapter and servo power, then run:
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+export PORT=/dev/ttyACM0
+
+ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+scripts/so101_servo_status.py "$PORT" --scan
+```
+
+Expected state before enabling the bridge:
+
+- IDs `1-6` should be visible.
+- Voltage should match the follower supply, around 12V for the current arm.
+- Temperature should be normal at idle.
+- PID columns should be left at the servo's current EEPROM values. The current workflow does not rewrite P/I/D.
+
+### Terminal A: start the hardware bridge without PID overwrite
+
+This wrapper enables torque, then launches the hardware bridge with `configure_motors_on_connect:=false`. The servo internal position PID still works; the bridge simply does not overwrite PID registers.
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+export PORT=/dev/ttyACM0
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+
+SO101_COMMAND_RATE_HZ=180 \
+SO101_FEEDBACK_READ_RATE_HZ=25 \
+SO101_LPF_ALPHA=1.0 \
+SO101_SERVO_SPEED=500 \
+SO101_SERVO_ACCELERATION=25 \
+~/SO101/scripts/run_ros_hardware_bridge_no_pid.sh "$PORT"
+```
+
+Keep this terminal running.
+
+### Terminal B: verify ROS state and lock the arm
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source ~/SO101/ros1_ws/devel/setup.bash
+
+rostopic list | grep /so101
+rosrun so101_ros1_bridge so101_control_cli.py state
+rosrun so101_ros1_bridge so101_control_cli.py named ready --duration 4.0
+sleep 1
+rosrun so101_ros1_bridge so101_control_cli.py state
+rosrun so101_ros1_bridge so101_control_cli.py freeze
+```
+
+If the visual `ready` pose is clearly wrong, stop and recheck factory middle/calibration before running trajectories. Do not solve a bad middle pose by relaxing joint limits.
+
+### Terminal C: optional live trajectory plot
+
+Use this on Jetson only if a display or X forwarding is available. For headless Jetson runs, skip live plotting and use offline plotting after CSV capture.
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source ~/SO101/ros1_ws/devel/setup.bash
+
+mkdir -p ~/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --live \
+  --history-seconds 120 \
+  --update-rate-hz 15 \
+  --reset-on-trajectory \
+  --save ~/SO101/so101_plots/so101_live_trajectory_jetson.png
+```
+
+### Terminal D: reproduce the current best desktop baseline
+
+The current recommended baseline is `xz_vertex_diamond + z_bias=0.0083`, `f=0.1 Hz`, `100 x 40 mm`. Do not use the tested `phasexz_v1_safe` profile as the default, because it regressed versus this baseline.
+
+```bash
+cd ~/SO101
+export SO101_ROOT="$PWD"
+export ROS_HOME=/tmp/so101_ros_home
+export ROS_LOG_DIR=/tmp/so101_ros_logs
+mkdir -p "$ROS_HOME" "$ROS_LOG_DIR"
+source /opt/ros/noetic/setup.bash
+source ~/SO101/ros1_ws/devel/setup.bash
+
+rosrun so101_ros1_bridge so101_control_cli.py named ready --duration 4.0
+sleep 1
+rosrun so101_ros1_bridge so101_control_cli.py freeze
+
+STAMP=$(date +%Y%m%d_%H%M%S)
+CSV=/tmp/so101_ee_xz_vertex_diamond_f100_x050_z020_zbias0083_jetson_${STAMP}.csv
+
+rosrun so101_ros1_bridge so101_ee_sine_test.py \
+  --execution-mode joint_trajectory \
+  --pattern xz_vertex_diamond \
+  --center 0.380 0.0 0.160 \
+  --x-amplitude 0.050 \
+  --z-amplitude 0.020 \
+  --frequency 0.100 \
+  --duration 30 \
+  --rate 180 \
+  --ramp-duration 8 \
+  --prep-pose ready \
+  --prep-duration 4.0 \
+  --move-to-center-duration 10 \
+  --center-joint-tolerance 0.03 \
+  --center-max-start-error 0.04 \
+  --joint-limit-margin 0.080 \
+  --z-feedforward-bias 0.0083 \
+  --csv "$CSV"
+
+if [ ! -s "$CSV" ]; then
+  echo "ERROR: CSV was not generated: $CSV"
+  echo "Check Terminal A and the so101_ee_sine_test.py output before retrying."
+  exit 1
+fi
+
+rosrun so101_ros1_bridge so101_analyze_csv.py --ignore-start 10 "$CSV"
+
+mkdir -p ~/SO101/so101_plots
+rosrun so101_ros1_bridge so101_plot_ee_trajectory.py \
+  --csv "$CSV" \
+  --output-dir ~/SO101/so101_plots
+
+echo "$CSV"
+```
+
+Reference desktop result for comparison: mean EE error `4.700 mm`, RMSE `5.037 mm`, max `8.381 mm`, Z high-pass RMS `0.573 mm`. A Jetson result does not need to match exactly on the first run, but large regression usually means port assignment, calibration, power, USB latency, or mechanical mounting changed.
+
+### Jetson deployment checklist
+
+Before using the Jetson setup near a UAV, confirm:
+
+1. `scripts/so101_servo_status.py "$PORT" --scan` sees all six servos.
+2. `ready` and `freeze` hold the expected physical pose.
+3. The diamond baseline finishes and writes a CSV.
+4. The CSV has no IK command failures or rejected execution samples.
+5. Minimum servo voltage stays close to the desktop baseline and does not show repeated drops.
+6. Emergency stop, freeze, and relax commands are tested while the arm is unloaded.
+7. No-prop UAV bench tests pass before any propeller-on test.
+
+Useful stop commands:
+
+```bash
+rosrun so101_ros1_bridge so101_control_cli.py freeze
+rosrun so101_ros1_bridge so101_control_cli.py estop on
+rosrun so101_ros1_bridge so101_control_cli.py relax
+```
+
+### Sync the handoff to a USB drive
+
+The tested USB path on the development machine is `/media/zzk/Ventoy/ZZK/SO101`.
+Run this from a normal local terminal, not from a restricted sandbox, because
+the USB mount must be writable:
+
+```bash
+cd /home/zzk/ZZK/SO101
+scripts/sync_so101_to_usb.sh /media/zzk/Ventoy/ZZK/SO101
+```
+
+The script writes two locations on the USB drive:
+
+- `/media/zzk/Ventoy/ZZK/SO101`: deploy-relevant project tree.
+- `/media/zzk/Ventoy/ZZK/SO101_JetsonDeploy_20260904`: small clean handoff folder with the Jetson tarball, checksum, README, command notes, and meeting report.
+
+It also verifies `so101_jetson_deploy_20260904.tar.gz` with sha256 on the USB
+drive. Do not format the development machine until that verification prints
+`成功` or `OK` and the GitHub branch `so101-aerial-handoff-20260903` has the
+latest commits you need.
+
 ## Why Not Directly Use Latest LeRobot Inside ROS Noetic?
 
 The cloned LeRobot repository currently requires Python >= 3.12, while ROS Noetic on Ubuntu 20.04 uses Python 3.8. The bridge is therefore written as a Noetic-native adapter:
